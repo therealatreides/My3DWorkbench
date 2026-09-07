@@ -1,0 +1,12 @@
+# My 3D Workbench — local artifacts
+spool.db
+spool.db-wal
+spool.db-shm
+uploads/
+__pycache__/
+*.pyc
+.venv/
+venv/
+server.log
+boot.log
+AGENTS.md

@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My 3D Workbench — 3D Prints Management</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛠️</text></svg>">
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-ico">🛠️</span>
+      <span class="brand-name">My 3D Workbench</span>
+      <span class="brand-sub">3D Prints Management</span>
+    </div>
+    <nav id="nav">
+      <a href="#/filaments" data-nav="filaments">Filaments</a>
+      <a href="#/models" data-nav="models">Models</a>
+      <a href="#/printers" data-nav="printers">Printers</a>
+      <a href="#/settings" data-nav="settings">Settings</a>
+    </nav>
+  </header>
+
+  <main id="app" aria-busy="true"><div class="loading">Loading…</div></main>
+
+  <div id="modal-root"></div>
+  <div id="toast-root" aria-live="polite"></div>
+
+  <script src="/static/js/core.js"></script>
+  <script src="/static/js/views-filaments.js"></script>
+  <script src="/static/js/views-models.js"></script>
+  <script src="/static/js/views-printers.js"></script>
+  <script src="/static/js/forms-model.js"></script>
+  <script src="/static/js/views-settings.js"></script>
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

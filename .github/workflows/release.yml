@@ -6,7 +6,9 @@
 # artifact, and the last step posts every dist/* file to the GitHub Release.
 name: Release
 
-on:
+# on: the trigger key is *quoted* on purpose — unquoted `on:` parses as
+# YAML boolean `True` under YAML 1.1 and GitHub's schema validation fails
+"on":
   push:
     tags:
       - "v[0-9]+.*"

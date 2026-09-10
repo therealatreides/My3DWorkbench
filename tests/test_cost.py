@@ -1,4 +1,4 @@
-"""Unit tests for the pure cost engine (app/cost.py).
+"""Unit tests for the pure cost engine (my3d_workbench/cost.py).
 
 No Flask, no database — this module exercises the money math exactly as the
 spreadsheet defined it. Run via ``python tests/run_tests.py``.
@@ -9,7 +9,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir)))
 
-from app import cost as ce   # noqa: E402
+from my3d_workbench import cost as ce   # noqa: E402
 
 
 # -- helpers ---------------------------------------------------------------

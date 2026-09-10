@@ -2,7 +2,7 @@
 "use strict";
 
 /* The cost-calculation settings a printer may override (same keys as global
-   Settings; order mirrors app/cost.py COST_SETTING_KEYS). */
+   Settings; order mirrors my3d_workbench/cost.py COST_SETTING_KEYS). */
 const PRINTER_SETTING_KEYS = [
   ["material_efficiency_factor", "Material efficiency factor"],
   ["labor_hourly_rate", "Labor rate (per hour)"],

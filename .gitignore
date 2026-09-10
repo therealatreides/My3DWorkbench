@@ -1,11 +1,24 @@
 # My 3D Workbench — local artifacts
+uploads/
+
+# Local user data (only present when MY3DWORKBENCH_HOME points into the repo)
+My3DWorkbench.db
+My3DWorkbench.db-wal
+My3DWorkbench.db-shm
+
+# Legacy (pre-rename) data files
 spool.db
 spool.db-wal
 spool.db-shm
-uploads/
+
 __pycache__/
 *.pyc
 .venv/
+.eggs/
+*.egg-info/
+dist/
+.pyi-work/
+My3DWorkbench.spec
 venv/
 server.log
 boot.log

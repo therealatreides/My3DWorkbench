@@ -27,14 +27,31 @@ const FIL_SORTS = [
 ];
 const FIL_SORT_FIELDS = { color: "color_name", brand: "brand", type: "type" };
 
+/* Persisted-view-state storage keys.
+   One-shot migration from the legacy "spool.*" names: any saved value is
+   carried over to the new key and the old key dropped, so the rename is
+   invisible to users who already have a sort mode / filters persisted. */
+function migrateSpoolStorageKeys() {
+  try {
+    [["spool.filSort", "my3dworkbench.filSort"],
+     ["spool.filFilters", "my3dworkbench.filFilters"]].forEach(([old, next]) => {
+        if (localStorage.getItem(old) != null && localStorage.getItem(next) == null) {
+          localStorage.setItem(next, localStorage.getItem(old));
+          localStorage.removeItem(old);
+        }
+      });
+  } catch (e) { /* private mode etc. — nothing persisted to migrate */ }
+}
+migrateSpoolStorageKeys();
+
 function filSortMode() {
-  try { return localStorage.getItem("spool.filSort") || ""; } catch (e) { return ""; }
+  try { return localStorage.getItem("my3dworkbench.filSort") || ""; } catch (e) { return ""; }
 }
 function rememberFilSort(mode) {
   App.state.filSort = mode;
   try {
-    if (mode) localStorage.setItem("spool.filSort", mode);
-    else localStorage.removeItem("spool.filSort");
+    if (mode) localStorage.setItem("my3dworkbench.filSort", mode);
+    else localStorage.removeItem("my3dworkbench.filSort");
   } catch (e) { /* private mode etc. — in-memory state alone is enough */ }
 }
 
@@ -81,8 +98,8 @@ function anyFilFilterActive() {
 }
 function rememberFilFilters() {
   try {
-    if (anyFilFilterActive()) localStorage.setItem("spool.filFilters", JSON.stringify(filFilters()));
-    else localStorage.removeItem("spool.filFilters");
+    if (anyFilFilterActive()) localStorage.setItem("my3dworkbench.filFilters", JSON.stringify(filFilters()));
+    else localStorage.removeItem("my3dworkbench.filFilters");
   } catch (e) { /* private mode etc. — in-memory state alone is enough */ }
 }
 /* Restore persisted filters (best effort); anything not a legal value is
@@ -91,7 +108,7 @@ function rememberFilFilters() {
 function restoreFilFilters() {
   const f = filFilters();
   try {
-    const raw = localStorage.getItem("spool.filFilters");
+    const raw = localStorage.getItem("my3dworkbench.filFilters");
     if (raw) {
       const saved = JSON.parse(raw);
       FIL_FILTER_KEYS.forEach((k) => {

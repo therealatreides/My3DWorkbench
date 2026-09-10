@@ -23,11 +23,11 @@ framework: plain Flask + SQLite + vanilla JS.
 ## Install & run
 
 The only runtime dependency is **Flask** (+ `waitress`, the production WSGI
-server — `run.py` falls back to Flask's dev server if it is missing).
-Requires **Python 3.8+** (Flask 3); 3.10+ is a comfortable default.
-The app lives **at the root of this repository** — `run.py`, `app/`, and
-`tests/` sit next to this file — so work from whichever folder the repo
-cloned into (the one containing `run.py`).
+server — the server falls back to Flask's dev server if it is missing).
+Requires **Python 3.10+**. The app lives **at the root of this repository**
+— `run.py`, `my3d_workbench/` (the package), and `tests/` sit next to this
+file — so work from whichever folder the repo cloned into (the one
+containing `run.py`).
 
 ### Windows
 
@@ -79,6 +79,41 @@ python run.py
 Open `http://localhost:8080` — or, from another machine on the same LAN,
 `http://<machine-ip>:8080` (the app binds `0.0.0.0` by default).
 
+### Or install it as a command (wheel)
+
+The same app can be packaged and installed once, then started by name — no
+repo checkout needed at runtime:
+
+```bash
+pip wheel . -w dist                          # build once (needs hatchling, fetched by pip)
+pip install dist/my3dworkbench-*.whl
+my3dworkbench                                # starts the server on :8080
+```
+
+(`pipx install dist/my3dworkbench-*.whl` works too. Same env vars, same
+data dir — the CLI and the repo checkout share one profile per machine.)
+
+### Releases (prebundled, no Python needed)
+
+Each `vX.Y.Z` tag pushes a **GitHub Actions** build that bundles the app
+(PyInstaller) per platform and posts these to **GitHub → Releases**:
+
+| File | For |
+|------|-----|
+| `My3DWorkbench-X.Y.Z-windows-x86_64.exe` | Windows — run it; stop with `Ctrl+C` in the console window |
+| `My3DWorkbench-X.Y.Z-macos-arm64.tar.gz` | macOS / Apple Silicon (Intel Macs: use the wheel above) |
+| `My3DWorkbench-X.Y.Z-linux-x86_64.tar.gz` | Linux (incl. x86-64 Pis) |
+| `my3dworkbench-X.Y.Z-py3-none-any.whl` | `pip`/`pipx` on any platform |
+
+Same env vars on every flavor (`MY3DWORKBENCH_*`, see below), same data dir —
+an exe and a pip install on one machine read the same data. macOS binaries
+are not code-signed: Gatekeeper may block a first double-click (right-click →
+Open, or run it in a terminal — it's a local server, not a GUI app).
+
+**Cutting a release:** bump `version` in `pyproject.toml`, commit, then
+`git tag vX.Y.Z && git push --tags` — the workflow gates on the full test
+suite, then builds, smoke-tests, and publishes the assets.
+
 ### Security posture (read before exposing beyond a trusted LAN)
 
 * **There is no authentication or per-user accounts** — by design, it is a tool
@@ -101,13 +136,93 @@ Open `http://localhost:8080` — or, from another machine on the same LAN,
 
 ### Environment variables
 
-| Variable        | Default                | Purpose                          |
-|-----------------|------------------------|----------------------------------|
-| `APP_HOST`      | `0.0.0.0`              | bind address                     |
-| `APP_PORT`      | `8080`                 | port                             |
-| `SPOOL_DB`      | `<project>/spool.db`   | SQLite file location             |
-| `SPOOL_UPLOADS` | `<project>/uploads`    | uploaded pictures                |
-| `SEED_DEMO`     | unset                  | `1` = also load sample data      |
+| Variable              | Default                              | Purpose                          |
+|-----------------------|--------------------------------------|----------------------------------|
+| `MY3DWORKBENCH_HOST`  | `0.0.0.0`                            | bind address                     |
+| `MY3DWORKBENCH_PORT`  | `8080`                               | port                             |
+| `MY3DWORKBENCH_HOME`  | OS app-data dir + `My3DWorkbench`    | data folder (DB + uploads)       |
+| `MY3DWORKBENCH_DB`    | `<data dir>/My3DWorkbench.db`        | SQLite file location             |
+| `MY3DWORKBENCH_UPLOADS` | `<data dir>/uploads`              | uploaded pictures                |
+| `MY3DWORKBENCH_LOG`     | unset                              | append all server output to this file — **required when running without a console** (scheduled tasks, launchd, systemd)    |
+| `SEED_DEMO`           | unset                                | `1` = also load sample data      |
+
+The data folder default is per-OS (all overridable — any folder works):
+
+* **Windows:** `%LOCALAPPDATA%\My3DWorkbench`
+* **macOS:** `~/Library/Application Support/My3DWorkbench`
+* **Linux / Pi:** `$XDG_DATA_HOME/My3DWorkbench` (default `~/.local/share/My3DWorkbench`)
+
+So a dev checkout, a wheel install, and a bundled binary on the same machine
+all share one profile. (Before the rename, data lived in the project folder
+itself — `spool.db` + `uploads/`; copy those into the data dir to migrate, or
+point `MY3DWORKBENCH_DB` / `MY3DWORKBENCH_UPLOADS` at the old folder to use
+it in place.)
+
+### Run on startup / as a service (no person in front of a console)
+
+The launcher is console-safe either way: set `MY3DWORKBENCH_LOG` and *all*
+server output goes to that file (line-buffered, appended, UTF-8) instead of
+crashing on the missing console. Every recipe below is just "start the same
+process + log file + a service manager that restarts it".
+
+**Windows — Task Scheduler** (either works; pick by what you want to see):
+
+* *Run whether user is logged on or not* (true background service):
+  ```
+  program:  C:\...\my3dworkbench.exe          (or C:\...\python run.py in your venv)
+  env vars: MY3DWORKBENCH_LOG=C:\Logs\My3DWorkbench\server.log   ← required here
+  trigger : At startup  (check “Run as soon as possible after a scheduled start is missed”)
+  ```
+* *Run only when user is logged on*: a normal console window opens at login —
+  then `MY3DWORKBENCH_LOG` is optional and `Ctrl+C` in the window stops it.
+
+**macOS — launchd (LaunchAgent, per user):**
+`~/Library/LaunchAgents/io.my3dworkbench.server.plist`
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>io.my3dworkbench.server</string>
+  <key>ProgramArguments</key>
+  <array><string>/path/to/my3dworkbench</string></array>  <!-- or: python + path/to/run.py -->
+  <key>EnvironmentVariables</key><dict>
+    <key>MY3DWORKBENCH_LOG</key><string>~/Library/Logs/My3DWorkbench/server.log</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/dev/null</string>
+  <key>StandardErrorPath</key><string>/dev/null</string>
+</dict></plist>
+```
+```bash
+mkdir -p ~/Library/Logs/My3DWorkbench
+launchctl load ~/Library/LaunchAgents/io.my3dworkbench.server.plist   # `launchctl unload` to stop
+```
+(`launchd` resolves `~` in paths; a system-wide daemon wants `LaunchDaemons` + a
+real user for the data dir — for a personal LAN server, the LaunchAgent above
+is the right size.)
+
+**Linux / Pi — systemd user service (recommended)**:
+`~/.config/systemd/user/my3dworkbench.service`
+```ini
+[Unit]
+Description=My 3D Workbench (user service)
+
+[Service]
+ExecStart=/home/pi/My3DWorkbench/.venv/bin/python /home/pi/My3DWorkbench/run.py
+Environment=MY3DWORKBENCH_LOG=/home/pi/My3DWorkbench/logs/server.log
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+```bash
+mkdir -p ~/My3DWorkbench/logs
+systemctl --user enable --now my3dworkbench
+journalctl --user -u my3dworkbench     # or: cat ~/My3DWorkbench/logs/server.log
+```
+A *system* unit also works (see next section, Pi setup) but user units are
+simpler and keep data owned by the user.
 
 ---
 
@@ -115,10 +230,12 @@ Open `http://localhost:8080` — or, from another machine on the same LAN,
 
 ```
 .                          # project root (the folder that contains run.py)
-├── run.py                     # entrypoint (waitress → falls back to Flask dev server)
+├── run.py                     # dev entrypoint (waitress → falls back to Flask dev server)
 ├── requirements.txt
-├── app/
-│   ├── __init__.py            # Flask application factory + error handlers
+├── pyproject.toml             # wheel build + `my3dworkbench` CLI entry point
+├── my3d_workbench/            # the package (what a wheel installs)
+│   ├── __init__.py            # Flask application factory + error handlers + data-dir defaults
+│   ├── __main__.py            # `my3dworkbench` / `python -m my3d_workbench` launcher
 │   ├── db.py                  # schema DDL, settings seed, per-request connections
 │   ├── cost.py                # COST ENGINE — pure functions, no Flask/DB imports
 │   ├── api_helpers.py         # request parsing, uploads, serializers
@@ -129,24 +246,24 @@ Open `http://localhost:8080` — or, from another machine on the same LAN,
 │   │   ├── models.py          # /api/models CRUD + associations + material line items + cost breakdown (+ ?printer=)
 │   │   ├── printers.py        # /api/printers CRUD + per-printer cost overrides
 │   │   └── settings.py        # global cost defaults (fixed registry) + derived machine rate
-│   └── seed_demo.py           # optional sample data
-├── templates/index.html       # single-page shell
-└── static/
-    ├── css/app.css            # all styling (no dependencies)
-    └── js/
-        ├── core.js            # API client, toasts, modals, formatters
-        ├── views-filaments.js # filament list / detail / form
-        ├── views-models.js    # model list / cost-breakdown detail / printer preview
-        ├── views-printers.js  # printer fleet list / form (per-printer overrides)
-        ├── forms-model.js     # model form (multi-filament selection)
-        ├── views-settings.js  # global cost defaults table + machine-rate panel
-        └── app.js             # hash router + bootstrap
+│   ├── seed_demo.py           # optional sample data
+│   ├── templates/index.html   # single-page shell
+│   └── static/
+│       ├── css/app.css            # all styling (no dependencies)
+│       └── js/
+│           ├── core.js            # API client, toasts, modals, formatters
+│           ├── views-filaments.js # filament list / detail / form
+│           ├── views-models.js    # model list / cost-breakdown detail / printer preview
+│           ├── views-printers.js  # printer fleet list / form (per-printer overrides)
+│           ├── forms-model.js     # model form (multi-filament selection)
+│           ├── views-settings.js  # global cost defaults table + machine-rate panel
+│           └── app.js             # hash router + bootstrap
 ```
 
-**Extensibility:** `app/cost.py` is the *only* place that knows the pricing
-math, and it only takes/returns plain dicts — unit-test it without any app
-context. Any new cost rule goes there. New API resources are a new file in
-`app/routes/` registered in `app/__init__.py`.
+**Extensibility:** `my3d_workbench/cost.py` is the *only* place that knows
+the pricing math, and it only takes/returns plain dicts — unit-test it without
+any app context. Any new cost rule goes there. New API resources are a new
+file in `my3d_workbench/routes/` registered in `my3d_workbench/__init__.py`.
 
 ---
 
@@ -168,7 +285,7 @@ concurrent reads while a write happens.
 
 ## Cost engine
 
-All logic lives in `app/cost.py`.
+All logic lives in `my3d_workbench/cost.py`.
 
 **Machine rate** (computed live from `settings`):
 
@@ -277,7 +394,7 @@ fraction of the year.
 `waitress` (already in `requirements.txt`) is a fine production server; if it
 isn't installed, `run.py` falls back to Flask's dev server.
 
-**systemd unit** (`/etc/systemd/system/spool.service`; paths assume the clone
+**systemd unit** (`/etc/systemd/system/my3dworkbench.service`; paths assume the clone
 lives in `~/My3DWorkbench` — adjust if it is elsewhere):
 
 ```ini
@@ -291,23 +408,24 @@ User=pi
 WorkingDirectory=/home/pi/My3DWorkbench
 ExecStart=/home/pi/My3DWorkbench/.venv/bin/python run.py
 Restart=on-failure
-Environment=APP_HOST=0.0.0.0
-Environment=APP_PORT=8080
+Environment=MY3DWORKBENCH_HOST=0.0.0.0
+Environment=MY3DWORKBENCH_PORT=8080
 
 [Install]
 WantedBy=multi-user.service
 ```
 
 ```bash
-sudo systemctl enable --now spool
+sudo systemctl enable --now my3dworkbench
 # LAN access: http://<machine-ip>:8080
 # firewall (optional):  sudo ufw allow 8080
 ```
 
-**Backups:** everything lives in two places — `spool.db` and `uploads/`.
-Copy those two and you're backed up.
+**Backups:** everything lives in the data dir — `My3DWorkbench.db` and `uploads/`
+(default: the OS app-data folder for *My3DWorkbench* — see Environment
+variables above). Copy those two and you're backed up.
 
-**Back to defaults:** delete `spool.db` (settings reseed on next start) —
+**Back to defaults:** delete `My3DWorkbench.db` (settings reseed on next start) —
 filament/model data is user data and will not come back.
 
 ---
@@ -385,8 +503,8 @@ so it needs **nothing extra** (no pytest, no network):
 .venv/bin/python tests/run_tests.py         # Linux / Pi
 ```
 
-It uses a temporary database and uploads directory (never your real
-`spool.db`), covers the cost engine unit tests, the whole REST API
+It uses a temporary database and uploads directory (never your real data dir —
+`My3DWorkbench.db` lives under the OS app-data folder since the rename), covers the cost engine unit tests, the whole REST API
 (validation, cascades, search semantics, uploads, JSON error envelopes, the
 413 handler, path-traversal guard, bulk-settings atomicity, demo-seed
 idempotency), the exact multipart field shapes the browser sends, and a

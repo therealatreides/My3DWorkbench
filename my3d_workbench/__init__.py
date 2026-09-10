@@ -1,5 +1,6 @@
 """My 3D Workbench — Flask application factory (all wiring lives here)."""
 import os
+import sys
 
 from flask import Flask
 
@@ -7,25 +8,51 @@ from . import db as database
 from .errors import APIError
 from .routes import core, filaments, models, printers, settings
 
+#: Per-user data dir suffix, e.g. ``%LOCALAPPDATA%\\My3DWorkbench``.
+APP_NAME = "My3DWorkbench"
+
+
+def default_data_dir():
+    """Where user data (``My3DWorkbench.db``, ``uploads/``) lives by default.
+
+    Override with ``MY3DWORKBENCH_HOME`` (any folder). On Windows the dir is
+    under ``%LOCALAPPDATA%``, on macOS under ``~/Library/Application Support``,
+    and on Linux under ``$XDG_DATA_HOME`` (or ``~/.local/share``) — so a dev
+    checkout, a pip install, and a bundled binary all share one profile.
+    """
+    home = os.environ.get("MY3DWORKBENCH_HOME")
+    if home:
+        return os.path.abspath(home)
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
+    elif sys.platform == "darwin":
+        base = os.path.expanduser("~/Library/Application Support")
+    else:
+        base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
+    return os.path.join(base, APP_NAME)
+
 
 def create_app(config_overrides=None):
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+    pkg_dir = os.path.dirname(__file__)
     app = Flask(
         __name__,
-        template_folder=os.path.join(base_dir, "templates"),
-        static_folder=os.path.join(base_dir, "static"),
+        template_folder=os.path.join(pkg_dir, "templates"),
+        static_folder=os.path.join(pkg_dir, "static"),
         static_url_path="/static",
     )
+    data_dir = default_data_dir()
     app.config.update(
-        DATABASE_PATH=os.path.join(base_dir, "spool.db"),
-        UPLOAD_FOLDER=os.path.join(base_dir, "uploads"),
+        DATA_DIR=data_dir,
+        DATABASE_PATH=os.path.join(data_dir, "My3DWorkbench.db"),
+        UPLOAD_FOLDER=os.path.join(data_dir, "uploads"),
         MAX_CONTENT_LENGTH=10 * 1024 * 1024,   # 10 MB upload cap
     )
-    app.config["DATABASE_PATH"] = os.environ.get("SPOOL_DB", app.config["DATABASE_PATH"])
-    app.config["UPLOAD_FOLDER"] = os.environ.get("SPOOL_UPLOADS", app.config["UPLOAD_FOLDER"])
+    app.config["DATABASE_PATH"] = os.environ.get("MY3DWORKBENCH_DB", app.config["DATABASE_PATH"])
+    app.config["UPLOAD_FOLDER"] = os.environ.get("MY3DWORKBENCH_UPLOADS", app.config["UPLOAD_FOLDER"])
     if config_overrides:
         app.config.update(config_overrides)
 
+    os.makedirs(app.config["DATA_DIR"], exist_ok=True)
     os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
     database.init_app(app)
     if os.environ.get("SEED_DEMO") == "1":

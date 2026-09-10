@@ -4,7 +4,7 @@ Exercises the full REST contract with Flask's test client: CRUD on all four
 resources, search semantics (incl. LIKE-wildcard escaping), uploads, cascade
 deletes, per-printer overrides, ``?printer=`` previews, settings validation,
 and error envelopes. Cost figures are cross-checked against the pure engine
-(app/cost.py) computed independently in the test.
+(my3d_workbench/cost.py) computed independently in the test.
 
 Run via ``python tests/run_tests.py`` (env is set up there, before import).
 """
@@ -21,8 +21,8 @@ import zlib
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir)))
 
-from app import create_app                    # noqa: E402
-from app import cost as ce                    # noqa: E402
+from my3d_workbench import create_app           # noqa: E402
+from my3d_workbench import cost as ce           # noqa: E402
 
 APP = create_app()
 APP.config["TESTING"] = True
@@ -324,9 +324,9 @@ def test_23_upload_too_large_413_json():
 
 
 def test_24_upload_path_traversal_blocked():
-    r = CLIENT.get("/uploads/../../../../spool/run.py")
+    r = CLIENT.get("/uploads/../../../../My3DWorkbench-run.py")
     assert r.status_code == 404
-    r2 = CLIENT.get("/uploads/..%2f..%2f..%2fapp/cost.py")
+    r2 = CLIENT.get("/uploads/..%2f..%2f..%2fmy3d_workbench%2fcost.py")
     assert r2.status_code in (400, 404)
 
 
@@ -678,16 +678,16 @@ def test_60_demo_seed_idempotent():
     """SEED_DEMO=1 on a fresh DB creates a coherent demo; re-runs must not
     duplicate. (Uses its own temp database.)"""
     import tempfile
-    d = tempfile.mkdtemp(prefix="spool-demo-")
-    env = dict(os.environ, SPOOL_DB=os.path.join(d, "demo.db"),
-               SPOOL_UPLOADS=os.path.join(d, "up"), SEED_DEMO="1")
+    d = tempfile.mkdtemp(prefix="m3wb-demo-")
+    env = dict(os.environ, MY3DWORKBENCH_DB=os.path.join(d, "demo.db"),
+               MY3DWORKBENCH_UPLOADS=os.path.join(d, "up"), SEED_DEMO="1")
     src = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
     code = (
         "import sys; sys.path.insert(0, %r)\n"
-        "from app import create_app\n"
+        "from my3d_workbench import create_app\n"
         "app = create_app()\n"
         "with app.app_context():\n"
-        "    from app import db\n"
+        "    from my3d_workbench import db\n"
         "    print('fil', db.query_one('SELECT COUNT(*) n FROM filaments')['n'])\n"
         "    print('mod', db.query_one('SELECT COUNT(*) n FROM models')['n'])\n"
         "    print('prn', db.query_one('SELECT COUNT(*) n FROM printers')['n'])\n"
@@ -695,7 +695,7 @@ def test_60_demo_seed_idempotent():
         "import os; os.environ['SEED_DEMO']='1'\n"
         "app2 = create_app()\n"
         "with app2.app_context():\n"
-        "    from app import db\n"
+        "    from my3d_workbench import db\n"
         "    print('fil2', db.query_one('SELECT COUNT(*) n FROM filaments')['n'])\n"
         "    print('prn2', db.query_one('SELECT COUNT(*) n FROM printers')['n'])\n"
         % src)
@@ -787,12 +787,12 @@ def test_70_live_server_concurrency():
         s.close()
         return port
 
-    d = tempfile.mkdtemp(prefix="spool-live-")
+    d = tempfile.mkdtemp(prefix="m3wb-live-")
     port = free_port()
     env = dict(os.environ,
-               SPOOL_DB=os.path.join(d, "live.db"),
-               SPOOL_UPLOADS=os.path.join(d, "up"),
-               APP_HOST="127.0.0.1", APP_PORT=str(port), SEED_DEMO="")
+               MY3DWORKBENCH_DB=os.path.join(d, "live.db"),
+               MY3DWORKBENCH_UPLOADS=os.path.join(d, "up"),
+               MY3DWORKBENCH_HOST="127.0.0.1", MY3DWORKBENCH_PORT=str(port), SEED_DEMO="")
     exe = sys.executable
     proc = subprocess.Popen([exe, "run.py"], cwd=os.path.abspath(
         os.path.join(os.path.dirname(__file__), os.pardir)),
@@ -1003,7 +1003,7 @@ def test_86_csv_import_all_invalid_400_with_rows():
 
 def test_87_csv_template_matches_importer():
     import csv as _csv_mod
-    from app.routes.filaments import HEADER_ALIASES, REQUIRED_COLUMNS
+    from my3d_workbench.routes.filaments import HEADER_ALIASES, REQUIRED_COLUMNS
     r = CLIENT.get("/api/filaments/import/template")
     assert r.status_code == 200 and r.mimetype == "text/csv"
     assert "attachment" in r.headers.get("Content-Disposition", "")
@@ -1027,7 +1027,7 @@ def test_88_upload_delete_retries_when_file_is_busy():
     Regression: the retry loop calls time.sleep; the module once used it
     without importing it (NameError -> 500 on the live path)."""
     import errno
-    import app.api_helpers as ah
+    import my3d_workbench.api_helpers as ah
 
     fid = post("/api/filaments", data={
         "color_name": "Retry Red", "type": "PLA", "brand": "T",
@@ -1370,3 +1370,46 @@ def test_95_purchase_link_must_be_an_http_s_link():
     CLIENT.delete(f"/api/filaments/{ok['id']}")
     CLIENT.delete(f"/api/filaments/{fine['id']}")
 
+
+
+def test_96_daemon_mode_logs_to_file():
+    """MY3DWORKBENCH_LOG makes the server runnable with NO console attached
+    (Task Scheduler 'whether logged on or not', launchd, systemd): the
+    startup lines must land in the log file, and the server must serve."""
+    import socket, subprocess, time, urllib.request
+
+    d = tempfile.mkdtemp(prefix="m3wb-daemon-")
+    s = socket.socket(); s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]; s.close()
+    logfile = os.path.join(d, "server.log")
+    env = dict(os.environ,
+               MY3DWORKBENCH_DB=os.path.join(d, "daemon.db"),
+               MY3DWORKBENCH_UPLOADS=os.path.join(d, "up"),
+               MY3DWORKBENCH_HOST="127.0.0.1", MY3DWORKBENCH_PORT=str(port),
+               MY3DWORKBENCH_LOG=logfile)
+    src = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
+    proc = subprocess.Popen([sys.executable, "run.py"], cwd=src,
+                            env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    up = False
+    try:
+        for _ in range(80):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=1).read()
+                up = True
+                break
+            except Exception:
+                time.sleep(0.25)
+    finally:
+        if proc.poll() is None:
+            if sys.platform == "win32":
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                proc.terminate()
+        try:
+            proc.wait(timeout=15)
+        except Exception:
+            proc.kill()
+    log = open(logfile, encoding="utf-8", errors="replace").read()
+    assert up, f"daemon-mode server never came up; log: {log[-400:]}"
+    assert "My 3D Workbench is up" in log, f"startup line missing from log: {log[-400:]}"

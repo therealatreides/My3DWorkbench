@@ -99,7 +99,7 @@ CREATE TABLE IF NOT EXISTS model_materials (
 CREATE INDEX IF NOT EXISTS idx_model_materials_mid ON model_materials (model_id);
 
 -- Global cost defaults — the fixed registry the cost engine reads
--- (see app/routes/settings.py; only these keys exist).
+-- (see my3d_workbench/routes/settings.py; only these keys exist).
 CREATE TABLE IF NOT EXISTS settings (
     key         TEXT PRIMARY KEY,
     value       TEXT NOT NULL,

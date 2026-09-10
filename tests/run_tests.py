@@ -18,8 +18,8 @@ sys.path.insert(0, ROOT)
 # Fresh throwaway DB + uploads dir for the whole run (before the app is
 # created anywhere).
 _TMP_DIR = tempfile.mkdtemp(prefix="spool-test-")
-os.environ["SPOOL_DB"] = os.path.join(_TMP_DIR, "test.db")
-os.environ["SPOOL_UPLOADS"] = os.path.join(_TMP_DIR, "uploads")
+os.environ["MY3DWORKBENCH_DB"] = os.path.join(_TMP_DIR, "test.db")
+os.environ["MY3DWORKBENCH_UPLOADS"] = os.path.join(_TMP_DIR, "uploads")
 os.environ.pop("SEED_DEMO", None)
 
 FAILED = []

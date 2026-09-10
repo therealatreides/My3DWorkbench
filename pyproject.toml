@@ -1,0 +1,25 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "my3dworkbench"
+version = "1.0.0"
+description = "My 3D Workbench — a local 3D-printing workflow manager: filaments, models, printers, and a spreadsheet-port cost engine."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "therealatreides" }]
+dependencies = [
+    "Flask>=3.0",
+    "waitress>=3.0",
+]
+
+[project.scripts]
+my3dworkbench = "my3d_workbench.cli:main"
+
+[project.urls]
+Repository = "https://github.com/TheRealAtreides/My3DWorkbench"
+
+[tool.hatch.build.targets.wheel]
+packages = ["my3d_workbench"]

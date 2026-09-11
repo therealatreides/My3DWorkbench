@@ -38,17 +38,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # add separator for --add-data differs per OS (";" on Windows, ":" elsewhere)
-        - os: windows-latest
-          relname: windows-x86_64.exe
-          addsep: ";"
-          wheel: true   # wheel is py3-none-any → built once, on the Windows job
-        - os: macos-latest
-          relname: macos-arm64.tar.gz
-          addsep: ":"
-        - os: ubuntu-latest
-          relname: linux-x86_64.tar.gz
-          addsep: ":"
+        # matrix must be a *mapping*: list entries go under `include:`.
+        # --add-data separator differs per OS (";" on Windows, ":" elsewhere);
+        # the wheel is py3-none-any, so it's built once, on the Windows job.
+        include:
+          - os: windows-latest
+            relname: windows-x86_64.exe
+            addsep: ";"
+            wheel: true
+          - os: macos-latest
+            relname: macos-arm64.tar.gz
+            addsep: ":"
+          - os: ubuntu-latest
+            relname: linux-x86_64.tar.gz
+            addsep: ":"
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

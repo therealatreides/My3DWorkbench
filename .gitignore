@@ -1,7 +1,7 @@
 # My 3D Workbench — local artifacts
 uploads/
 
-# Local user data (only present when MY3DWORKBENCH_HOME points into the repo)
+# Local user data (default location for a dev checkout: next to the package)
 My3DWorkbench.db
 My3DWorkbench.db-wal
 My3DWorkbench.db-shm

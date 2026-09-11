@@ -90,8 +90,9 @@ pip install dist/my3dworkbench-*.whl
 my3dworkbench                                # starts the server on :8080
 ```
 
-(`pipx install dist/my3dworkbench-*.whl` works too. Same env vars, same
-data dir — the CLI and the repo checkout share one profile per machine.)
+(`pipx install dist/my3dworkbench-*.whl` works too. Same env vars on every
+flavor — and by default each install keeps its own data local to itself,
+see "Environment variables" below.)
 
 ### Releases (prebundled, no Python needed)
 
@@ -105,8 +106,9 @@ Each `vX.Y.Z` tag pushes a **GitHub Actions** build that bundles the app
 | `My3DWorkbench-X.Y.Z-linux-x86_64.tar.gz` | Linux (incl. x86-64 Pis) |
 | `my3dworkbench-X.Y.Z-py3-none-any.whl` | `pip`/`pipx` on any platform |
 
-Same env vars on every flavor (`MY3DWORKBENCH_*`, see below), same data dir —
-an exe and a pip install on one machine read the same data. macOS binaries
+Same env vars on every flavor (`MY3DWORKBENCH_*`, see below). By default
+each install keeps its data **local to itself** — the exe in the folder the
+exe lives in, the pip install next to its package. macOS binaries
 are not code-signed: Gatekeeper may block a first double-click (right-click →
 Open, or run it in a terminal — it's a local server, not a GUI app).
 
@@ -140,23 +142,25 @@ suite, then builds, smoke-tests, and publishes the assets.
 |-----------------------|--------------------------------------|----------------------------------|
 | `MY3DWORKBENCH_HOST`  | `0.0.0.0`                            | bind address                     |
 | `MY3DWORKBENCH_PORT`  | `8080`                               | port                             |
-| `MY3DWORKBENCH_HOME`  | OS app-data dir + `My3DWorkbench`    | data folder (DB + uploads)       |
+| `MY3DWORKBENCH_HOME`  | the app's install folder (see below) | data folder (DB + uploads)       |
 | `MY3DWORKBENCH_DB`    | `<data dir>/My3DWorkbench.db`        | SQLite file location             |
 | `MY3DWORKBENCH_UPLOADS` | `<data dir>/uploads`              | uploaded pictures                |
 | `MY3DWORKBENCH_LOG`     | unset                              | append all server output to this file — **required when running without a console** (scheduled tasks, launchd, systemd)    |
 | `SEED_DEMO`           | unset                                | `1` = also load sample data      |
 
-The data folder default is per-OS (all overridable — any folder works):
+The data folder default is **local to the install** — the data lives where
+the app lives, never in the OS app-data folder (all overridable, any
+folder works):
 
-* **Windows:** `%LOCALAPPDATA%\My3DWorkbench`
-* **macOS:** `~/Library/Application Support/My3DWorkbench`
-* **Linux / Pi:** `$XDG_DATA_HOME/My3DWorkbench` (default `~/.local/share/My3DWorkbench`)
+* **Dev checkout / Raspberry Pi:** the repo itself — `my3d_workbench/My3DWorkbench.db`
+  + `my3d_workbench/uploads/`
+* **`pip install my3dworkbench`:** next to the installed package (site-packages)
+* **Bundled binary:** the folder the executable lives in
 
-So a dev checkout, a wheel install, and a bundled binary on the same machine
-all share one profile. (Before the rename, data lived in the project folder
-itself — `spool.db` + `uploads/`; copy those into the data dir to migrate, or
-point `MY3DWORKBENCH_DB` / `MY3DWORKBENCH_UPLOADS` at the old folder to use
-it in place.)
+Each install therefore owns its own data. (Before the rename, data likewise
+lived in the project folder — `spool.db` + `uploads/`; either keep both
+pointed at those files with `MY3DWORKBENCH_DB` / `MY3DWORKBENCH_UPLOADS`, or
+drop them into your install's data folder.)
 
 ### Run on startup / as a service (no person in front of a console)
 

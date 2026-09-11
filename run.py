@@ -12,7 +12,7 @@ The ``app`` object below is exposed as ``run:app`` for WSGI deployment
 Environment variables:
     MY3DWORKBENCH_HOST    bind address  (default 0.0.0.0, i.e. reachable on the LAN)
     MY3DWORKBENCH_PORT    port          (default 8080)
-    MY3DWORKBENCH_HOME    data folder   (default: the OS app-data dir for My3DWorkbench)
+    MY3DWORKBENCH_HOME    data folder   (default: the app's install folder)
     MY3DWORKBENCH_DB      absolute path of the SQLite file
                           (default <data dir>/My3DWorkbench.db)
     MY3DWORKBENCH_UPLOADS folder for image uploads (default <data dir>/uploads)

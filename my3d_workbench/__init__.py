@@ -8,28 +8,27 @@ from . import db as database
 from .errors import APIError
 from .routes import core, filaments, models, printers, settings
 
-#: Per-user data dir suffix, e.g. ``%LOCALAPPDATA%\\My3DWorkbench``.
+#: Product name (suffix of the data files: ``My3DWorkbench.db``, ``uploads/``).
 APP_NAME = "My3DWorkbench"
 
 
 def default_data_dir():
     """Where user data (``My3DWorkbench.db``, ``uploads/``) lives by default.
 
-    Override with ``MY3DWORKBENCH_HOME`` (any folder). On Windows the dir is
-    under ``%LOCALAPPDATA%``, on macOS under ``~/Library/Application Support``,
-    and on Linux under ``$XDG_DATA_HOME`` (or ``~/.local/share``) — so a dev
-    checkout, a pip install, and a bundled binary all share one profile.
+    Local to the install on purpose: a dev checkout keeps its database in
+    the repo next to this package, and a bundled (PyInstaller) binary keeps
+    it next to its executable -- the data lives where the app lives, never
+    in the OS app-data folder by default.
+
+    Point it anywhere else with ``MY3DWORKBENCH_HOME`` (any folder), or pin
+    the exact files with ``MY3DWORKBENCH_DB`` / ``MY3DWORKBENCH_UPLOADS``.
     """
     home = os.environ.get("MY3DWORKBENCH_HOME")
     if home:
-        return os.path.abspath(home)
-    if sys.platform == "win32":
-        base = os.environ.get("LOCALAPPDATA") or os.path.expanduser("~")
-    elif sys.platform == "darwin":
-        base = os.path.expanduser("~/Library/Application Support")
-    else:
-        base = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
-    return os.path.join(base, APP_NAME)
+        return os.path.abspath(os.path.expanduser(home))
+    if getattr(sys, "frozen", False):      # PyInstaller bundle: __file__ is virtual
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
 
 
 def create_app(config_overrides=None):

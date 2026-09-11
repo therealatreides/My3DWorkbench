@@ -64,17 +64,14 @@ jobs:
           pip install -r requirements.txt pyinstaller
       - name: Bundle
         run: |
-          # --paths . puts the repo root on the *analysis* search path —
-          # the pyinstaller console script does not add CWD to sys.path
-          # like `python` does, so the my3d_workbench package would
-          # otherwise be "missing module" at bundle time.
-          pyinstaller --noconfirm --onefile \
-            --name My3DWorkbench \
-            --paths . \
-            --workpath .pyi-work --specpath . \\
-            --add-data "my3d_workbench/templates${{ matrix.addsep }}my3d_workbench/templates" \
-            --add-data "my3d_workbench/static${{ matrix.addsep }}my3d_workbench/static" \
-            build/entry_my3dworkbench.py
+          # --paths . puts the repo root on the *analysis* search path: the
+          # pyinstaller console script does not add CWD to sys.path like
+          # `python` does, so without it the package is missing-module.
+          # Kept on one physical line: backslash continuations break under
+          # the Windows (PowerShell) runner, and a stray backslash becomes
+          # a literal argument PyInstaller reads as the entry script
+          # ('Script file "' does not exist').
+          pyinstaller --noconfirm --onefile --name My3DWorkbench --paths . --workpath .pyi-work --specpath . --add-data "my3d_workbench/templates${{ matrix.addsep }}my3d_workbench/templates" --add-data "my3d_workbench/static${{ matrix.addsep }}my3d_workbench/static" build/entry_my3dworkbench.py
       - name: Smoke test the binary
         run: python build/smoke.py dist
       - name: Name the release artifact

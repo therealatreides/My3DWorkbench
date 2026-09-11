@@ -87,6 +87,10 @@ jobs:
               ;;
             *)
               tar czf "dist/My3DWorkbench-${VER}-${{ matrix.relname }}" -C dist My3DWorkbench
+            # delete the raw source binary: the tarballs above are the named,
+            # versioned artifacts; posting the loose file would shadow itself as
+            # 'My3DWorkbench' (no extension, no OS, no version) on the release.
+            rm -f dist/My3DWorkbench
               ;;
           esac
           ls -lh dist

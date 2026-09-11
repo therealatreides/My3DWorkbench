@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "my3dworkbench"
-version = "1.0.0"
+version = "1.0.1"
 description = "My 3D Workbench — a local 3D-printing workflow manager: filaments, models, printers, and a spreadsheet-port cost engine."
 readme = "README.md"
 requires-python = ">=3.10"

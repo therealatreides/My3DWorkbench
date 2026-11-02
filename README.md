@@ -1,13 +1,17 @@
 # My 3D Workbench — 3D Prints Management
 
 A small, local, full-stack web app for running a 3D-printing workflow:
-filament spool (in stock **and** out of stock, bulk-importable
+filament spools (in stock **and** out of stock, bulk-importable
 from a **CSV** file, and **bulk-deletable via a select mode** — pick any
-handful and delete them in one go), a catalog
+handful and delete them in one go; each spool can carry a **hex color code** —
+rendered as the spool's thumbnail when there's no photo — plus **bed and
+nozzle temperatures**), a catalog
 of models with the filaments they use and any **extra material line items**
 (wood dowels, magnets, shipping boxes, each valued quantity × unit price and
 added into the model's cost), a fleet of **printers** (each with its
-own overrides of the cost settings), and a cost engine ported 1:1 from
+own overrides of the cost settings, a **last-maintenance date**, and a
+**red overdue flag** on any machine past the configurable **maintenance
+period** you set in Settings), and a cost engine ported 1:1 from
 a spreadsheet I have used for years. Filaments are searchable by
 color or brand, **filterable by brand, color, type, or stock status**,
 and **sortable by color, brand, or type** (A→Z / Z→A, your
@@ -237,9 +241,11 @@ simpler and keep data owned by the user.
 ├── run.py                     # dev entrypoint (waitress → falls back to Flask dev server)
 ├── requirements.txt
 ├── pyproject.toml             # wheel build + `my3dworkbench` CLI entry point
+├── tests/                     # zero-dependency test suite (`run_tests.py`)
 ├── my3d_workbench/            # the package (what a wheel installs)
 │   ├── __init__.py            # Flask application factory + error handlers + data-dir defaults
 │   ├── __main__.py            # `my3dworkbench` / `python -m my3d_workbench` launcher
+│   ├── cli.py                 # console-safe server launcher (waitress, `MY3DWORKBENCH_LOG` detach)
 │   ├── db.py                  # schema DDL, settings seed, per-request connections
 │   ├── cost.py                # COST ENGINE — pure functions, no Flask/DB imports
 │   ├── api_helpers.py         # request parsing, uploads, serializers
@@ -249,7 +255,7 @@ simpler and keep data owned by the user.
 │   │   ├── filaments.py       # /api/filaments CRUD + related models + bulk delete (+ CSV import)
 │   │   ├── models.py          # /api/models CRUD + associations + material line items + cost breakdown (+ ?printer=)
 │   │   ├── printers.py        # /api/printers CRUD + per-printer cost overrides
-│   │   └── settings.py        # global cost defaults (fixed registry) + derived machine rate
+│   │   └── settings.py        # global defaults (fixed registry) + derived machine rate
 │   ├── seed_demo.py           # optional sample data
 │   ├── templates/index.html   # single-page shell
 │   └── static/
@@ -260,7 +266,7 @@ simpler and keep data owned by the user.
 │           ├── views-models.js    # model list / cost-breakdown detail / printer preview
 │           ├── views-printers.js  # printer fleet list / form (per-printer overrides)
 │           ├── forms-model.js     # model form (multi-filament selection)
-│           ├── views-settings.js  # global cost defaults table + machine-rate panel
+│           ├── views-settings.js  # global defaults table (cost + maintenance period) + machine-rate panel
 │           └── app.js             # hash router + bootstrap
 ```
 
@@ -275,11 +281,11 @@ file in `my3d_workbench/routes/` registered in `my3d_workbench/__init__.py`.
 
 | Table             | Purpose |
 |-------------------|---------|
-| `filaments`       | color, type, brand, purchase link, spool weight (g), cost per spool, **`current_stock_g`** (0 = out of stock), picture path, notes |
+| `filaments`       | color, type, brand, purchase link, spool weight (g), cost per spool, **`current_stock_g`** (0 = out of stock), picture path, notes, **`hex_color`** (`#rrggbb`, blank = not set), **`bed_temp_c`** / **`nozzle_temp_c`** (°C, 0 = not set) |
 | `models`          | name, purpose (`Personal`/`Profit`), **`filament_amount_g`**, **`print_time_hr`**, **`labor_min`**, picture, description, notes |
 | `model_filaments` | many-to-many model ↔ filament. Optional **`grams`** column pins exactly how much of that filament the model uses; when `NULL` the model's total grams are split *evenly* across its filaments at costing time |
-| `settings`        | the fixed **global cost defaults** — the 11 cost keys from `Adv. Inputs` + `currency_code`. This is the complete registry the cost engine reads; no other keys are accepted |
-| `printers`        | the machine fleet: `manufacturer`, `model_name`, `bed_size` (free text), `notes` |
+| `settings`        | the fixed **global defaults** — the 11 cost keys from `Adv. Inputs` + `currency_code` + **`maintenance_period_days`** (the days between proper printer maintenance; the Printers tab flags printers whose `last_maintenance` is older than this — blank turns the flag off). This is the complete registry; no other keys are accepted (only the 11 cost keys feed the cost math) |
+| `printers`        | the machine fleet: `manufacturer`, `model_name`, `bed_size` (free text), `notes`, **`last_maintenance`** (last regular service: `YYYY-MM-DD`, blank = not recorded) |
 | `printer_settings`| per-printer **overrides** of the cost settings (same keys as `settings`); a row present means "use this value for this printer", and deleting a row puts the printer back on the global value |
 
 Foreign keys use `ON DELETE CASCADE`; `PRAGMA journal_mode=WAL` enables
@@ -348,13 +354,13 @@ UI send a picture file plus fields in one request).
 |---|---|---|
 | GET | `/api/filaments` | all spools + derived `cost_per_kg`, `in_stock`; combinable filters (all case-insensitive): `q=` free text on **color name OR brand**, `color=` / `brand=` / `type=` exact match, `stock=` `in` \| `out` |
 | GET | `/api/filaments/facets` | distinct brand / color / type values present in the data (feeds the UI filter dropdowns) |
-| POST | `/api/filaments` | create (fields: `color_name`, `type`, `brand`, `purchase_link` (an `http(s)://` link or blank — anything else is a 400), `spool_weight_g` (1 … 1 trillion g), `cost_per_spool` (≤ 1 trillion), `current_stock_g`, `notes`, optional file `picture`) |
+| POST | `/api/filaments` | create (fields: `color_name`, `type`, `brand`, `purchase_link` (an `http(s)://` link or blank — anything else is a 400), `spool_weight_g` (1 … 1 trillion g), `cost_per_spool` (≤ 1 trillion), `current_stock_g`, `notes`, **`hex_color`** (6 hex digits, `#` optional, case-insensitive — stored canonical `#rrggbb`; junk like `abc` or `zzz` is a 400), **`bed_temp_c`** / **`nozzle_temp_c`** (0 … 1000 °C, 0 = not set), optional file `picture`) |
 | GET | `/api/filaments/<id>` | detail **including `related_models`** (cross-reference view) |
 | PUT | `/api/filaments/<id>` | update |
 | DELETE | `/api/filaments/<id>` | deletes; model links cascade away |
 | DELETE | `/api/filaments/bulk` | **bulk delete** (the UI's select mode) — JSON `{"ids": [1, 2, …]}` or a bare list; unknown / junk / boolean values are skipped without failing the request, at most 1000 ids per request; model links cascade away and uploaded images of the deleted rows are removed |
 | GET | `/api/filaments/import/template` | downloadable CSV with the expected headers + example rows |
-| POST | `/api/filaments/import` | **bulk import** — multipart file field `file` (CSV, ≤2 MB). Additive: never touches existing rows; per-row problems are reported (`skipped: [{row, reason}]`) instead of failing the whole file. Flexible headers (case/punctuation/unit-agnostic), accepts comma/semicolon/tab/pipe, UTF-8 (BOM ok) or Latin-1. A purchase link, if present, must be an `http(s)://` link. |
+| POST | `/api/filaments/import` | **bulk import** — multipart file field `file` (CSV, ≤2 MB), now including optional **Hex color**, **Bed temp (°C)** and **Nozzle temp (°C)** columns (other spellings like “Nozzle temperature” are accepted too). Additive: never touches existing rows; per-row problems are reported (`skipped: [{row, reason}]`) instead of failing the whole file. Flexible headers (case/punctuation/unit-agnostic), accepts comma/semicolon/tab/pipe, UTF-8 (BOM ok) or Latin-1. A purchase link, if present, must be an `http(s)://` link. A row with an invalid hex code (e.g. `zzz`) is skipped with a reason, not silently stored. |
 
 ### Models
 | Method | Path | Notes |
@@ -369,24 +375,27 @@ UI send a picture file plus fields in one request).
 | Method | Path | Notes |
 |---|---|---|
 | GET | `/api/printers` | list with each printer's `settings` overrides **and its resulting `machine_rate`** |
-| POST | `/api/printers` | create (fields: `model_name`*, `manufacturer`, `bed_size`, `notes` + any of the 11 cost-setting keys, each ≤ 1 trillion and `estimated_uptime_fraction` ≤ 1; blank = inherit global) |
+| POST | `/api/printers` | create (fields: `model_name`*, `manufacturer`, `bed_size`, `notes`, **`last_maintenance`** (a real calendar date in `YYYY-MM-DD` form or blank — junk like `2026-02-30`, reordered dates, or date-times is a 400) + any of the 11 cost-setting keys, each ≤ 1 trillion and `estimated_uptime_fraction` ≤ 1; blank = inherit global) |
 | GET | `/api/printers/<id>` | detail |
 | PUT | `/api/printers/<id>` | update — a cost-setting key sent **blank** removes that override; a key not sent is left alone |
 | DELETE | `/api/printers/<id>` | deletes; its `printer_settings` cascade away |
 
-### Settings (global cost defaults)
+### Settings (global cost defaults + preferences)
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/api/settings` | all 12 cost defaults + `machine_rate` derivation details |
+| GET | `/api/settings` | all 13 defaults + `machine_rate` derivation details |
 | PUT | `/api/settings/<key>` | change one key's value/description |
 | DELETE | `/api/settings/<key>` | **reset the key to its seeded default** (response: `{"ok": true, "reset_to": <value>}`) — the registry is fixed, so this is "back to factory", not a row removal |
 | PUT | `/api/settings` | bulk JSON object `{"key": "value", …}` — atomic, all-or-nothing |
 
-The key set is **fixed** (the 11 numeric cost keys + `currency_code`); new keys
-are rejected on every write path. Numeric values are capped at 1 trillion
-(that keeps every product the cost engine forms finite — so no response can
-contain a raw `Infinity`), and `estimated_uptime_fraction` must be a 0–1
-fraction of the year.
+The key set is **fixed** (the 11 numeric cost keys + `currency_code` +
+`maintenance_period_days`); new keys are rejected on every write path. Numeric
+values are capped at 1 trillion (that keeps every product the cost engine forms
+finite — so no response can contain a raw `Infinity`), and
+`estimated_uptime_fraction` must be a 0–1 fraction of the year.
+`maintenance_period_days` must be whole positive days (e.g. `45`) capped at
+100 years, or blank to disable the flag — half-days, zero-days and booleans are
+a 400, never coerced.
 
 ### Misc
 `GET /api/health` · `GET /uploads/<path>` (pictures) · `GET /` (UI)
@@ -425,9 +434,10 @@ sudo systemctl enable --now my3dworkbench
 # firewall (optional):  sudo ufw allow 8080
 ```
 
-**Backups:** everything lives in the data dir — `My3DWorkbench.db` and `uploads/`
-(default: the OS app-data folder for *My3DWorkbench* — see Environment
-variables above). Copy those two and you're backed up.
+**Backups:** everything lives in the data dir — `My3DWorkbench.db` and
+`uploads/` (default: *local to the install* — for a repo checkout that's the
+`my3d_workbench/` folder itself; all overridable — see Environment variables
+above). Copy those two and you're backed up.
 
 **Back to defaults:** delete `My3DWorkbench.db` (settings reseed on next start) —
 filament/model data is user data and will not come back.
@@ -452,11 +462,30 @@ filament/model data is user data and will not come back.
   rate and a model's labor math read the seeded number, and the state equals a
   fresh/seeded registry (the old remove-the-row behavior silently made a
   deleted rate $0 until the next restart reseeded it).
+* **Maintenance period setting** (`maintenance_period_days`): round-trip
+  validation — whole positive days (or blank = flag off) pass, while
+  fractions, zero/negative days, non-numbers, booleans and a 100-year-exceeding
+  value are all a clean 400 with the stored value untouched; a bad pair in a
+  bulk update is atomic (the good half is not applied either); `DELETE`
+  resets to the seeded 45, and `GET` reports the registry as exactly the
+  cost keys + `currency_code` + `maintenance_period_days`. The Printers tab
+  flags a card (red border + “due: N days ago” chip) when the printer's
+  `last_maintenance` is older than the period, and the edit form opens with a
+  red “maintenance overdue” banner pointing at the date field. (The card/banner
+  rendering is client-side JS on the API-verified fields above.)
 * CSV bulk import: header aliasing, comma/semicolon/tab, BOM + Unicode, currency
   and thousands-separator cleaning, per-row skip reporting with row numbers,
   all-invalid → 400 with the row list, row/size limits, additive semantics
   (duplicates allowed, existing rows untouched), and a downloadable template
   that round-trips through the importer.
+* Filament print-profile fields (hex color + bed/nozzle temps): `hex_color`
+  accepts the six forms of the same color (uppercase, `#` or not) and stores
+  canonical `#rrggbb`, blank means “not set”, junk codes (`abc`, `zzz`, booleans)
+  are a 400 with nothing created; bed/nozzle temps are capped at 1 000 °C
+  (negative / boolean / over-cap are 400); the CSV importer maps “Hex color” /
+  “Bed temp (°C)” / “Nozzle temp” headers, skips invalid-hex rows with a reason,
+  and a database created **before** these columns shipped gets them backported on
+  restart with its existing rows intact (a one-shot `ALTER TABLE` migration).
 * Bulk filament delete (UI select mode → Delete N): a single request with a
   mixed selection deletes exactly the known rows while a bystander survives;
   junk/boolean ids, non-whole floats, and overlong id lists (→ 400) are
@@ -474,6 +503,12 @@ filament/model data is user data and will not come back.
   and doubling the buffer → **$0.3136/hr**); model detail `?printer=` and model
   list `?printer=` return the recomputed breakdown; sending an override
   **blank** restores the global value.
+* Printer **last maintenance date**: a `YYYY-MM-DD` date is stored verbatim
+  (blank = not recorded, clearable and re-settable via update), and the
+  validation is real-calendar — `2026-13-10`, `2026-02-30`, the non-leap
+  `2100-02-29`, reordered or date-time junk and booleans are all 400 with no
+  row created, while leap-day `2000-02-29` passes; pre-existing databases get
+  the column backported on restart, same as the filament fields.
 * Validation hardening (each got a regression test):
   - **reject, don't coerce** — `cost_per_spool: true`, `notes: false`, a
     `filament_grams` value of `true`, a `printer_cost: true` override → all
@@ -508,7 +543,8 @@ so it needs **nothing extra** (no pytest, no network):
 ```
 
 It uses a temporary database and uploads directory (never your real data dir —
-`My3DWorkbench.db` lives under the OS app-data folder since the rename), covers the cost engine unit tests, the whole REST API
+which is *local to the install* by default: the repo's `my3d_workbench/` folder
+for a dev checkout), covers the cost engine unit tests, the whole REST API
 (validation, cascades, search semantics, uploads, JSON error envelopes, the
 413 handler, path-traversal guard, bulk-settings atomicity, demo-seed
 idempotency), the exact multipart field shapes the browser sends, and a

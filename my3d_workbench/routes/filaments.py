@@ -57,6 +57,11 @@ def _parse_payload(existing=None):
             "cost_per_spool", required=True, min_value=0, max_value=1e12),
         "current_stock_g": helpers.float_field("current_stock_g", min_value=0),
         "notes": helpers.str_field("notes", max_len=2000),
+        # 0 = not set; capped like the other money/quantity fields so a junk
+        # value can't sail through (a 4096° nozzle is not a print profile).
+        "hex_color": helpers.hex_color_field("hex_color"),
+        "bed_temp_c": helpers.float_field("bed_temp_c", min_value=0, max_value=1000),
+        "nozzle_temp_c": helpers.float_field("nozzle_temp_c", min_value=0, max_value=1000),
         "image_path": dict(existing)["image_path"] if existing else "",
     }
     img = helpers.save_image("filaments")   # only reached when every field is valid
@@ -143,11 +148,12 @@ def create_filament():
     cur = db.execute(
         """INSERT INTO filaments (color_name, type, brand, purchase_link,
                                   spool_weight_g, cost_per_spool, current_stock_g,
-                                  image_path, notes)
-           VALUES (?,?,?,?,?,?,?,?,?)""",
+                                  image_path, notes, hex_color, bed_temp_c, nozzle_temp_c)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
         (data["color_name"], data["type"], data["brand"], data["purchase_link"],
          data["spool_weight_g"], data["cost_per_spool"], data["current_stock_g"],
-         data["image_path"], data["notes"]))
+         data["image_path"], data["notes"], data["hex_color"],
+         data["bed_temp_c"], data["nozzle_temp_c"]))
     return jsonify(helpers.filament_to_dict(
         db.query_one("SELECT * FROM filaments WHERE id = ?", (cur.lastrowid,)))), 201
 
@@ -168,11 +174,13 @@ def update_filament(fid):
     db.execute(
         """UPDATE filaments SET color_name=?, type=?, brand=?, purchase_link=?,
              spool_weight_g=?, cost_per_spool=?, current_stock_g=?, image_path=?, notes=?,
+             hex_color=?, bed_temp_c=?, nozzle_temp_c=?,
              updated_at = datetime('now')
            WHERE id = ?""",
         (data["color_name"], data["type"], data["brand"], data["purchase_link"],
          data["spool_weight_g"], data["cost_per_spool"], data["current_stock_g"],
-         data["image_path"], data["notes"], fid))
+         data["image_path"], data["notes"], data["hex_color"],
+         data["bed_temp_c"], data["nozzle_temp_c"], fid))
     return jsonify(helpers.filament_to_dict(
         db.query_one("SELECT * FROM filaments WHERE id = ?", (fid,))))
 
@@ -243,6 +251,8 @@ def bulk_delete_filaments():
 HEADER_ALIASES = {
     "color": "color_name", "color name": "color_name", "name": "color_name",
     "filament": "color_name", "filament name": "color_name",
+    "hex": "hex_color", "hex color": "hex_color", "color code": "hex_color",
+    "hex code": "hex_color", "hex color code": "hex_color", "color hex": "hex_color",
     "type": "type", "material": "type", "material type": "type",
     "brand": "brand", "manufacturer": "brand", "maker": "brand",
     "purchase link": "purchase_link", "link": "purchase_link", "url": "purchase_link",
@@ -257,6 +267,12 @@ HEADER_ALIASES = {
     "current stock g": "current_stock_g", "grams left": "current_stock_g",
     "remaining": "current_stock_g", "remaining g": "current_stock_g",
     "left": "current_stock_g",
+    "bed temp": "bed_temp_c", "bed temp c": "bed_temp_c",
+    "bed temperature": "bed_temp_c", "bed temp deg c": "bed_temp_c",
+    "bed": "bed_temp_c",
+    "nozzle temp": "nozzle_temp_c", "nozzle temp c": "nozzle_temp_c",
+    "nozzle temperature": "nozzle_temp_c", "nozzle temp deg c": "nozzle_temp_c",
+    "print temp": "nozzle_temp_c", "nozzle": "nozzle_temp_c",
     "notes": "notes", "note": "notes", "description": "notes",
     "comment": "notes", "comments": "notes",
 }
@@ -265,9 +281,12 @@ FIELD_LABELS = {
     "color_name": "color name", "type": "type", "brand": "brand",
     "purchase_link": "purchase link", "spool_weight_g": "spool weight (g)",
     "cost_per_spool": "cost per spool", "current_stock_g": "stock (g)", "notes": "notes",
+    "hex_color": "hex color", "bed_temp_c": "bed temp (°C)",
+    "nozzle_temp_c": "nozzle temp (°C)",
 }
 MAX_LEN = {"color_name": 100, "type": 50, "brand": 200,
            "purchase_link": 500, "notes": 2000}
+MAX_TEMP_C = 1000          # same cap the JSON API enforces for the temp fields
 MAX_IMPORT_ROWS = 5000
 MAX_CSV_BYTES = 2 * 1024 * 1024          # 2 MB is plenty for a spool list
 
@@ -379,7 +398,7 @@ def _parse_row(row, colmap):
     if len(ftype) > MAX_LEN["type"]:
         return None, f"{FIELD_LABELS['type']} exceeds {MAX_LEN['type']} characters"
 
-    def num(field, required, minimum):
+    def num(field, required, minimum, maximum=None):
         raw = get(field)
         if raw is None or raw == "":
             if required:
@@ -390,6 +409,8 @@ def _parse_row(row, colmap):
             return None, f"“{FIELD_LABELS[field]}” must be a number (got “{raw[:40]}”)"
         if v < minimum:
             return None, f"“{FIELD_LABELS[field]}” must be at least {minimum:g}"
+        if maximum is not None and v > maximum:
+            return None, f"“{FIELD_LABELS[field]}” is too large (max {maximum:g})"
         if v > 1e12:
             return None, f"“{FIELD_LABELS[field]}” is too large"
         return v, None
@@ -403,6 +424,21 @@ def _parse_row(row, colmap):
     stock, err = num("current_stock_g", False, 0)
     if err:
         return None, err
+    bed_temp, err = num("bed_temp_c", False, 0, MAX_TEMP_C)
+    if err:
+        return None, err
+    nozzle_temp, err = num("nozzle_temp_c", False, 0, MAX_TEMP_C)
+    if err:
+        return None, err
+
+    hex_raw = get("hex_color") or ""
+    if hex_raw:
+        if not helpers.HEX_COLOR_RE.match(hex_raw):
+            return None, (f"“{FIELD_LABELS['hex_color']}” must be 6 hex digits "
+                          f"like 1a2b3c or #1a2b3c (got “{hex_raw[:20]}”, or blank)")
+        hex_color = "#" + hex_raw.lstrip("#").lower()
+    else:
+        hex_color = ""
 
     brand = get("brand") or ""
     if len(brand) > MAX_LEN["brand"]:
@@ -418,15 +454,18 @@ def _parse_row(row, colmap):
 
     return {"color_name": color, "type": ftype.upper(), "brand": brand,
             "purchase_link": link, "spool_weight_g": int(round(weight)),
-            "cost_per_spool": cost, "current_stock_g": stock, "notes": notes}, None
+            "cost_per_spool": cost, "current_stock_g": stock, "notes": notes,
+            "hex_color": hex_color, "bed_temp_c": bed_temp, "nozzle_temp_c": nozzle_temp}, None
 
 
 # ---------------------------- endpoints ----------------------------
 
 TEMPLATE_CSV = (
-    "Color,Type,Brand,Spool weight (g),Cost per spool (USD),Stock (g),Purchase link,Notes\n"
-    "Cobalt Blue,PLA,Sample Spools,1000,20.00,875,https://example.com/spool,Primes well\n"
-    "Sail,ASA,Sample Spools,750,15.50,0,,\n"
+    "Color,Type,Brand,Spool weight (g),Cost per spool (USD),Stock (g),Purchase link,"
+    "Hex color,Bed temp (°C),Nozzle temp (°C),Notes\n"
+    "Cobalt Blue,PLA,Sample Spools,1000,20.00,875,https://example.com/spool,"
+    "0057b7,60,210,Primes well\n"
+    "Sail,ASA,Sample Spools,750,15.50,0,,,80,260,\n"
 )
 
 
@@ -470,11 +509,12 @@ def import_filaments():
         db.execute(
             """INSERT INTO filaments (color_name, type, brand, purchase_link,
                                       spool_weight_g, cost_per_spool, current_stock_g,
-                                      image_path, notes)
-               VALUES (?,?,?,?,?,?,?,?,?)""",
+                                      image_path, notes, hex_color, bed_temp_c, nozzle_temp_c)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
             (vals["color_name"], vals["type"], vals["brand"], vals["purchase_link"],
              vals["spool_weight_g"], vals["cost_per_spool"], vals["current_stock_g"],
-             "", vals["notes"]))
+             "", vals["notes"], vals["hex_color"],
+             vals["bed_temp_c"], vals["nozzle_temp_c"]))
         imported += 1
 
     if imported == 0:

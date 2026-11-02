@@ -572,8 +572,9 @@ def test_50_settings_list_shape():
     d = get("/api/settings")
     assert len(d["numeric_keys"]) == len(ce.COST_SETTING_KEYS) == 11
     keys = {s["key"] for s in d["settings"]}
-    # the registry is FIXED: exactly the cost keys + currency, nothing else
-    assert keys == set(ce.COST_SETTING_KEYS) | {"currency_code"}
+    # the registry is FIXED: exactly the cost keys + the display settings (currency,
+    # maintenance period), nothing else
+    assert keys == set(ce.COST_SETTING_KEYS) | {"currency_code", "maintenance_period_days"}
     assert d["machine_rate"]["source"] == "computed"
     close(d["machine_rate"]["rate_per_hr"],
           ce.compute_machine_rate(settings_map())["rate_per_hr"], tol=1e-12)
@@ -1413,3 +1414,229 @@ def test_96_daemon_mode_logs_to_file():
     log = open(logfile, encoding="utf-8", errors="replace").read()
     assert up, f"daemon-mode server never came up; log: {log[-400:]}"
     assert "My 3D Workbench is up" in log, f"startup line missing from log: {log[-400:]}"
+
+
+# ------------------------------------------------------ filament extras ----
+
+def test_97_filament_hex_color_and_temps_round_trip():
+    """hex_color + bed/nozzle temps: create, read, update.
+
+    The API is case/prefix-insensitive on read-in and stores the canonical
+    '#rrggbb' (the semantic color never changes); blank and 0 mean 'not set'."""
+    f = _mk_filament("Prism Red", hex_color="00FF88", bed_temp_c=60, nozzle_temp_c=215.5)
+    assert f["hex_color"] == "#00ff88"
+    assert f["bed_temp_c"] == 60 and f["nozzle_temp_c"] == 215.5
+    d = get(f"/api/filaments/{f['id']}")
+    assert d["hex_color"] == "#00ff88" and d["nozzle_temp_c"] == 215.5
+
+    # update: clear the hex (blank = not set), change the temps
+    u = put(f"/api/filaments/{f['id']}", {
+        "color_name": "Prism Red", "type": "PLA", "spool_weight_g": 1000,
+        "cost_per_spool": 10, "hex_color": "", "bed_temp_c": 0, "nozzle_temp_c": 240})
+    assert u["hex_color"] == "" and u["bed_temp_c"] == 0 and u["nozzle_temp_c"] == 240
+    # and back again — the field keeps working after being empty
+    u = put(f"/api/filaments/{f['id']}", {
+        "color_name": "Prism Red", "type": "PLA", "spool_weight_g": 1000,
+        "cost_per_spool": 10, "hex_color": "ABCDEF"})
+    assert u["hex_color"] == "#abcdef"
+    CLIENT.delete(f"/api/filaments/{f['id']}")
+
+
+def test_98_filament_hex_color_and_temp_validation():
+    """Reject, don't coerce: bad hex codes and out-of-range temps are 400 """
+    r = CLIENT.post("/api/filaments", json={
+        "color_name": "Bad Hex", "type": "PLA", "spool_weight_g": 1000,
+        "cost_per_spool": 10, "hex_color": "1a2b3c4"})
+    assert r.status_code == 400 and "hex color" in json_body(r)["error"].lower()
+    for bad in ("zzz", "#12", "123gg5", True):
+        r = CLIENT.post("/api/filaments", json={
+            "color_name": "Bad Hex", "type": "PLA", "spool_weight_g": 1000,
+            "cost_per_spool": 10, "hex_color": bad})
+        assert r.status_code == 400, (bad, r.status_code)
+    # ... and nothing was created by the failed attempts
+    assert not [x for x in get("/api/filaments") if x["color_name"] == "Bad Hex"]
+
+    for bad in (-1, 4096, True):
+        r = CLIENT.post("/api/filaments", json={
+            "color_name": "Hot Nozzle", "type": "PLA", "spool_weight_g": 1000,
+            "cost_per_spool": 10, "nozzle_temp_c": bad})
+        assert r.status_code == 400, (bad, r.status_code)
+        r = CLIENT.post("/api/filaments", json={
+            "color_name": "Hot Bed", "type": "PLA", "spool_weight_g": 1000,
+            "cost_per_spool": 10, "bed_temp_c": bad})
+        assert r.status_code == 400, (bad, r.status_code)
+    assert not [x for x in get("/api/filaments") if "Hot" in x["color_name"]]
+
+
+def test_99_csv_import_hex_color_and_temps():
+    """The CSV importer maps the new columns, stores canonical '#rrggbb',
+    and skips (with a row reason) rows whose hex code isn't a real one."""
+    text = ("Color,Type,Spool weight (g),Cost per spool,Bed temp (°C),Nozzle temp,Hex Color\n"
+            "Cobalt,PLA,1000,20.00,60,210,#0057b7\n"
+            "Sail,ASA,750,15.50,80,260,zzz\n"      # invalid hex — skipped, not stored
+            "Blank,PLA,1000,20.00,,,\n")            # all three blank — imported as not set
+    before = len(get("/api/filaments"))
+    r = _upload_csv(text)
+    assert r["imported"] == 2, r
+    assert len(r["skipped"]) == 1 and r["skipped"][0]["row"] == 3
+    assert "hex" in r["skipped"][0]["reason"].lower()
+    lst = get("/api/filaments")
+    assert len(lst) == before + 2
+    cobalt = next(x for x in lst if x["color_name"] == "Cobalt")
+    assert cobalt["hex_color"] == "#0057b7"
+    assert cobalt["bed_temp_c"] == 60.0 and cobalt["nozzle_temp_c"] == 210.0
+    blank = next(x for x in lst if x["color_name"] == "Blank")
+    assert blank["hex_color"] == "" and blank["bed_temp_c"] == 0.0 and blank["nozzle_temp_c"] == 0.0
+    for one in (cobalt, blank):
+        CLIENT.delete(f"/api/filaments/{one['id']}")
+
+
+def test_100_legacy_schema_migration():
+    """A database created before recent columns shipped (filament hex/temp,
+    printer last maintenance) gets them all backported on start —
+    CREATE TABLE IF NOT EXISTS alone can't change a live table — and its
+    existing rows keep their data."""
+    d = tempfile.mkdtemp(prefix="m3wb-migrate-")
+    p = os.path.join(d, "legacy.db")
+    leg = sqlite3.connect(p)
+    try:
+        leg.execute("""CREATE TABLE filaments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            color_name TEXT NOT NULL, type TEXT NOT NULL,
+            brand TEXT NOT NULL DEFAULT '', purchase_link TEXT NOT NULL DEFAULT '',
+            spool_weight_g INTEGER NOT NULL DEFAULT 0, cost_per_spool REAL NOT NULL DEFAULT 0,
+            current_stock_g REAL NOT NULL DEFAULT 0, image_path TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')))""")
+        leg.execute("INSERT INTO filaments (color_name, type) VALUES ('Legacy', 'PLA')")
+        leg.execute("""CREATE TABLE printers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, manufacturer TEXT NOT NULL DEFAULT '',
+            model_name TEXT NOT NULL, bed_size TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            updated_at TEXT NOT NULL DEFAULT (datetime('now')))""")
+        leg.execute("INSERT INTO printers (model_name) VALUES ('Benchy')")
+        leg.commit()
+    finally:
+        leg.close()
+
+    env_db = os.environ.get("MY3DWORKBENCH_DB")
+    env_up = os.environ.get("MY3DWORKBENCH_UPLOADS")
+    os.environ["MY3DWORKBENCH_DB"] = p
+    os.environ["MY3DWORKBENCH_UPLOADS"] = os.path.join(d, "uploads")
+    try:
+        app = create_app()
+        app.config["TESTING"] = True
+        c = app.test_client()
+        r = c.get("/api/filaments")
+        assert r.status_code == 200
+        rows = json.loads(r.get_data(as_text=True))
+        legacy = next(x for x in rows if x["color_name"] == "Legacy")
+        assert legacy["hex_color"] == "" and legacy["bed_temp_c"] == 0.0
+        assert legacy["nozzle_temp_c"] == 0.0            # seeded defaults, row intact
+        # and the legacy printers table got its last_maintenance column too
+        print_rows = json.loads(c.get("/api/printers").get_data(as_text=True))
+        legacy_print = next(x for x in print_rows if x["model_name"] == "Benchy")
+        assert legacy_print["last_maintenance"] == ""
+        r = c.put(f"/api/printers/{legacy_print['id']}",
+                  json={"model_name": "Benchy", "last_maintenance": "2026-02-10"})
+        assert r.status_code == 200, r.get_data(as_text=True)
+        assert json_body(r)["last_maintenance"] == "2026-02-10"
+        # and the new fields work against the migrated table
+        r = c.post("/api/filaments", json={"color_name": "New", "type": "PLA",
+                                          "spool_weight_g": 1000, "cost_per_spool": 10,
+                                          "hex_color": "aabbcc", "nozzle_temp_c": 230})
+        assert r.status_code == 201, r.get_data(as_text=True)
+        assert json_body(r)["hex_color"] == "#aabbcc"
+    finally:
+        if env_db is not None:
+            os.environ["MY3DWORKBENCH_DB"] = env_db
+        else:
+            os.environ.pop("MY3DWORKBENCH_DB")
+        if env_up is not None:
+            os.environ["MY3DWORKBENCH_UPLOADS"] = env_up
+        else:
+            os.environ.pop("MY3DWORKBENCH_UPLOADS")
+
+
+def test_101_printer_last_maintenance_round_trip():
+    """last_maintenance: a YYYY-MM-DD date is stored verbatim (SQLite's
+    sortable textual convention), blank means 'not recorded', and a stored
+    date can be cleared and re-set."""
+    p = post("/api/printers", body={"model_name": "Maintained", "last_maintenance": "2026-02-10"})
+    PRINTER_ID_M = p["id"]
+    assert p["last_maintenance"] == "2026-02-10"
+    d = get(f"/api/printers/{PRINTER_ID_M}")
+    assert d["last_maintenance"] == "2026-02-10"
+    u = put(f"/api/printers/{PRINTER_ID_M}",
+            body={"model_name": "Maintained", "last_maintenance": "1999-12-31"})
+    assert u["last_maintenance"] == "1999-12-31"
+    c = put(f"/api/printers/{PRINTER_ID_M}",
+            body={"model_name": "Maintained", "last_maintenance": ""})    # blank clears it
+    assert c["last_maintenance"] == ""
+    CLIENT.delete(f"/api/printers/{PRINTER_ID_M}")
+
+
+def test_102_printer_last_maintenance_validation():
+    """Reject, don't coerce: only real calendar dates in YYYY-MM-DD (or blank)
+    are accepted — no re-ordering, no time parts, no February 30."""
+    def try_create(value):
+        r = CLIENT.post("/api/printers", json={"model_name": "Bad Date", "last_maintenance": value})
+        return r.status_code
+    for bad in ("2026-13-10",    # month 13
+                "2026-02-30",    # not a calendar day
+                "2100-02-29",    # 2100 is NOT a leap year
+                "10/02/2026",    # different order/format
+                "20260210",
+                "2026-02-10T05:00:00",   # date + time — dates only
+                True):              # booleans are not dates
+        assert try_create(bad) == 400, (bad,)
+    assert not [x for x in get("/api/printers") if x["model_name"] == "Bad Date"]
+    # and the calendar is really checked: leap-day yes, phantom day no
+    assert try_create("2000-02-29") == 201
+    rows = [x for x in get("/api/printers") if x["last_maintenance"] == "2000-02-29"]
+    for p in rows:
+        CLIENT.delete(f"/api/printers/{p['id']}")
+    assert try_create("") == 201   # blank = not recorded, still valid
+    for p in [x for x in get("/api/printers") if x["model_name"] == "Bad Date"]:
+        CLIENT.delete(f"/api/printers/{p['id']}")
+
+
+def test_110_setting_maintenance_period_validation():
+    """maintenance_period_days: whole positive days (or blank) — reject, don't
+    coerce: fractions, zero/negative days, non-numbers and booleans are 400
+    with the stored value untouched; past the 100-year cap is a clean 400."""
+    r = CLIENT.put("/api/settings/maintenance_period_days", json={"value": "45"})
+    assert r.status_code == 200 and json_body(r)["value"] == "45"
+    for bad in ("abc",      # not a number
+                "45.5",     # a half-day maintenance plan is nonsense
+                "0",        # zero-day cycle is nonsense
+                "-3",
+                "1e999",    # non-finite after float() used to sneak past
+                "nan",
+                "inf",
+                "9999999",  # past the 36,500-day (100-year) cap
+                True):      # a boolean is not a number of days
+        r = CLIENT.put("/api/settings/maintenance_period_days", json={"value": bad})
+        assert r.status_code == 400, (bad, r.status_code)
+    assert settings_map()["maintenance_period_days"] == "45", "stored value must survive the rejections"
+    # bulk atomicity: a good pair plus one bad pair leaves BOTH unchanged
+    s0 = settings_map()
+    r = CLIENT.put("/api/settings", json={"labor_hourly_rate": "77",
+                                          "maintenance_period_days": "45.5"})
+    assert r.status_code == 400, r.get_data(as_text=True)
+    assert settings_map() == s0, "a bad pair must not leave the good half applied"
+
+
+def test_111_setting_maintenance_period_reset_and_blank():
+    """DELETE is a reset to the seeded 45, and blank is a legal 'flag off'."""
+    CLIENT.put("/api/settings/maintenance_period_days", json={"value": "30"})
+    assert settings_map()["maintenance_period_days"] == "30"
+    r = CLIENT.delete("/api/settings/maintenance_period_days")
+    assert r.status_code == 200 and json_body(r) == {"ok": True, "reset_to": "45"}
+    assert settings_map()["maintenance_period_days"] == "45"
+    # blank = feature off — legal, and not coerced to a number
+    CLIENT.put("/api/settings/maintenance_period_days", json={"value": ""})
+    assert settings_map()["maintenance_period_days"] == ""
+    CLIENT.put("/api/settings/maintenance_period_days", json={"value": "45"})   # leave it enabled

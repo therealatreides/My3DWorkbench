@@ -102,7 +102,21 @@ a:hover { text-decoration: underline; }
 .badge-stock-in { background: var(--green-bg); color: var(--green); }
 .badge-stock-out { background: var(--red-bg); color: var(--red); }
 .badge-purpose-Profit { background: var(--amber-bg); color: var(--amber); }
-.badge-purpose-Personal { background: var(--green-bg); color: var(--green); }
+.badge-purpose-Personal { background: var(--greenBg); color: var(--green); }
+
+/* ---------- color swatches (filament hex color) ---------- */
+/* Small circle next to the form label's text; .swatch-dot is the card list's
+   title dot; .swatch-lg is the detail modal's preview next to the code. */
+.swatch { display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+  border: 1px solid var(--line); vertical-align: -1px; margin-left: 4px; flex: 0 0 auto; }
+.swatch[hidden] { display: none; }   /* the display rule above would outrank the hidden attr */
+.swatch-lg { width: 16px; height: 16px; vertical-align: -2px; }
+.swatch-dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%;
+  border: 1px solid var(--line); margin-right: 6px; vertical-align: -1px; flex: 0 0 auto; }
+.field input[type=color] {
+  width: 52px; height: 34px; padding: 2px; background: var(--panel); cursor: pointer;
+}
+.kv code { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; font-size: 12.5px; }
 .chip-row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
 .chip {
   display: inline-flex; align-items: center; gap: 6px; background: var(--bg);
@@ -111,6 +125,14 @@ a:hover { text-decoration: underline; }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: #c9d2e3; display: inline-block; }
 .dot.in { background: var(--green); }
 .dot.out { background: var(--red); }
+
+/* ---------- overdue maintenance (Printers tab) ---------- */
+.card.card-overdue { border-color: var(--red); box-shadow: 0 0 0 2px var(--red-bg), var(--shadow); }
+.chip-overdue { background: var(--red-bg); border-color: var(--red); color: var(--red); font-weight: 600; }
+.maint-warn {
+  margin-bottom: 14px; padding: 10px 14px; border: 1px solid var(--red);
+  background: var(--red-bg); border-radius: var(--radius); font-size: 13.5px; line-height: 1.45;
+}
 
 /* ---------- bulk import modal ---------- */
 .imp-summary { border-radius: 10px; padding: 10px 14px; font-size: 14px; font-weight: 600; margin-top: 2px; }

@@ -1,10 +1,13 @@
-"""Global cost defaults — the fixed registry of settings the cost engine reads.
+"""Global cost defaults — the fixed registry of settings the cost engine reads,
+plus the fixed display preferences (currency and the maintenance period in
+days used by the Printers tab's overdue flag).
 
-The store holds exactly ``COST_SETTING_KEYS`` + ``currency_code``; every value
-feeds the cost math (see :mod:`app.cost`). New keys can no longer be added —
-unknown keys are rejected on every write path and hidden from read paths.
+The store holds exactly ``COST_SETTING_KEYS`` + the NON_COST_KEYS below; every
+value is validated on write. New keys can no longer be added — unknown keys
+are rejected on every write path and hidden from read paths.
 """
 import math
+import re
 
 from flask import Blueprint, jsonify, request
 
@@ -17,11 +20,16 @@ bp = Blueprint("settings", __name__, url_prefix="/api/settings")
 
 # The known, cost-consuming settings — validated as floats on write (empty
 # allowed, since e.g. the print-time-rate override is intentionally blank by
-# default) — plus the display currency. This is the COMPLETE registry; the
+# default) — plus the display settings that do NOT feed the money math:
+# the currency code and the maintenance period (days) the Printers tab uses
+# to flag overdue machines. This is the COMPLETE registry; the cost keys'
 # canonical list lives in the cost engine.
-KNOWN_KEYS = frozenset(cost_engine.COST_SETTING_KEYS) | {"currency_code"}
+NON_COST_KEYS = ("currency_code", "maintenance_period_days")
+KNOWN_KEYS = frozenset(cost_engine.COST_SETTING_KEYS) | frozenset(NON_COST_KEYS)
 NUMERIC_KEYS = frozenset(cost_engine.COST_SETTING_KEYS)
 MAX_SETTING_VALUE = 1e12   # keeps every product the cost engine forms finite
+MAX_MAINTENANCE_DAYS = 36500   # a 100-year maintenance cycle is not a cycle
+MAINT_DAYS_RE = re.compile(r"^[1-9][0-9]{0,6}$")   # whole positive days (≤ 9,999,999 digits-wise), then capped at 100 years below
 
 # Seeded defaults, keyed: DELETE is a *reset to these values*, not a row
 # removal (see delete_setting). Built once at import time from the seed list
@@ -41,6 +49,16 @@ def _validate(key, value):
         raise APIError(f"Unknown setting '{key}'. Only the global cost "
                        f"defaults are used: {', '.join(sorted(KNOWN_KEYS))}.")
     value = "" if value is None else str(value).strip()
+    if key == "maintenance_period_days":
+        # Reject, don't coerce: whole positive days (a 100-year upper bound
+        # keeps the Printers tab's date math finite), or blank = flag off.
+        if value != "" and not MAINT_DAYS_RE.match(value):
+            raise APIError("Setting 'maintenance_period_days' must be a whole "
+                           "number of days (e.g. 45) or left blank to turn the flag off.")
+        if value and int(value) > MAX_MAINTENANCE_DAYS:
+            raise APIError(f"Setting 'maintenance_period_days' is too large "
+                           f"(max {MAX_MAINTENANCE_DAYS:,} days).")
+        return key, value
     if value != "":
         try:
             numeric_value = float(value)

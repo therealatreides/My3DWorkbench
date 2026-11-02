@@ -9,6 +9,7 @@ import os
 import re
 import time
 import uuid
+from datetime import date
 
 from flask import current_app, request
 
@@ -109,6 +110,50 @@ def web_link_field(name, default="", required=False, max_len=500):
     text = str_field(name, default=default, required=required, max_len=max_len)
     if text and not WEB_LINK_RE.match(text):
         raise APIError(f"Field '{name}' must be an http(s):// web link (or left blank).")
+    return text
+
+
+# Stored hex colors are rendered straight into a CSS ``background`` value in
+# the UI, so the only shapes a stored value may mean are: six hex digits,
+# optionally preceded by '#'. Three-digit values ('abc') and non-hex junk
+# ('zzz') are ambiguous or meaningless — both are rejected at the boundary
+# rather than stored.
+HEX_COLOR_RE = re.compile(r"^#?[0-9a-fA-F]{6}$")
+
+
+def hex_color_field(name, default=""):
+    """A hex color code: six hex digits ('#' optional) or blank.
+
+    The '#' prefix and letter case are cosmetic, so the stored form is
+    normalized to '#rrggbb' (the semantic color never changes)."""
+    text = str_field(name, default=default, max_len=7)
+    if not text:
+        return ""
+    if not HEX_COLOR_RE.match(text):
+        raise APIError(
+            f"Field '{name}' must be a 6-digit hex color like #1a2b3c (or left blank).")
+    return "#" + text.lstrip("#").lower()
+
+
+# Dates are stored in SQLite's textual convention, 'YYYY-MM-DD' (the same form
+# <input type="date"> sends), so a stored value is always sortable and the
+# shape is what it looks like. Anything else — a different order, a time,
+# a non-calendar date like Feb 30 — is rejected at the boundary, and we
+# never re-interpret the user's date.
+ISO_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def date_field(name, default=""):
+    """A real calendar date in ``YYYY-MM-DD`` form, or blank (not recorded)."""
+    text = str_field(name, default=default, max_len=10)
+    if not text:
+        return ""
+    if not ISO_DATE_RE.match(text):
+        raise APIError(f"Field '{name}' must be a date in YYYY-MM-DD form (or left blank).")
+    try:
+        date.fromisoformat(text)
+    except ValueError:
+        raise APIError(f"Field '{name}' is not a valid calendar date ({text}).")
     return text
 
 

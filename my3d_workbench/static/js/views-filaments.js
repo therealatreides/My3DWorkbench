@@ -282,8 +282,9 @@ function filamentImportModal() {
     <p style="margin:0 0 4px; font-size:14px">
       One filament per row. Recognized headers: <b>Color</b>*, <b>Type</b>*,
       <b>Brand</b>, <b>Spool weight (g)</b>*, <b>Cost per spool</b>*, <b>Stock (g)</b>,
-      <b>Purchase link</b>, <b>Notes</b> — <b>*</b> required.
-      Other spellings are fine too (e.g. “Name”, “Material”, “Price”, “Weight (g)”).
+      <b>Purchase link</b>, <b>Hex color</b>, <b>Bed temp (°C)</b>, <b>Nozzle temp (°C)</b>,
+      <b>Notes</b> — <b>*</b> required.
+      Other spellings are fine too (e.g. “Name”, “Material”, “Price”, “Weight (g)”, “Nozzle temperature”).
     </p>
     <p class="hint" style="margin-top:0">
       Imports are <b>additive</b> — they never modify or delete existing filaments, and
@@ -418,7 +419,7 @@ function filCard(f) {
     ${filSelectMode ? `<div class="fil-check" aria-hidden="true"></div>` : ""}
     ${thumbHtml(f)}
     <div class="card-body">
-      <div class="card-title">${esc(f.color_name)}
+      <div class="card-title">${f.hex_color ? `<span class="swatch-dot" style="background:${esc(f.hex_color)}" aria-hidden="true"></span>` : ""}${esc(f.color_name)}
         <span class="badge badge-type">${esc(f.type)}</span></div>
       <div class="card-meta">${esc(f.brand || "—")} · spool ${esc(grams(f.spool_weight_g))}<br>
         ${money(f.cost_per_kg)}/kg · ${money(f.cost_per_spool)}/spool</div>
@@ -543,9 +544,14 @@ function filamentDetail(f) {
       <button class="icon" data-close>✕</button>
     </div>
     <div class="detail-hero">
-      ${f.picture_url ? `<img src="${esc(f.picture_url)}" alt="">` : `<div class="ph">🧵</div>`}
+      ${f.picture_url ? `<img src="${esc(f.picture_url)}" alt="">`
+        : f.hex_color ? `<div class="ph ph-color" style="background:${esc(f.hex_color)}" aria-hidden="true"></div>`
+        : `<div class="ph">🧵</div>`}
       <dl class="kv" style="flex:1">
         <dt>Brand</dt><dd>${esc(f.brand || "—")}</dd>
+        <dt>Color</dt><dd>${f.hex_color ? `<span class="swatch swatch-lg" style="background:${esc(f.hex_color)}"></span><code>${esc(f.hex_color)}</code>` : "—"}</dd>
+        ${f.nozzle_temp_c > 0 ? `<dt>Nozzle temp</dt><dd>${esc(f.nozzle_temp_c)}°C</dd>` : ""}
+        ${f.bed_temp_c > 0 ? `<dt>Bed temp</dt><dd>${esc(f.bed_temp_c)}°C</dd>` : ""}
         <dt>Spool weight</dt><dd>${esc(grams(f.spool_weight_g))}</dd>
         <dt>Cost</dt><dd>${money(f.cost_per_spool)} / spool = <b>${money(f.cost_per_kg)} / kg</b></dd>
         <dt>Stock</dt><dd>${stockBadge(f)}</dd>
@@ -612,6 +618,19 @@ function filamentForm(existing) {
         <div class="field"><label>Current stock (g)</label>
           <input name="current_stock_g" type="number" min="0" step="1" value="${f.current_stock_g ?? 0}">
           <span class="hint">0 = out of stock</span></div>
+        <div class="field"><label>Hex color
+          <span class="swatch" id="hex-swatch" hidden></span></label>
+          <input name="hex_color" id="hex-input" maxlength="7" value="${esc(f.hex_color || "")}"
+                 placeholder="#1a2b3c or blank" pattern="(#[0-9a-fA-F]{6})?" title="6 hex digits, e.g. 1a2b3c or #1a2b3c">
+          <input type="color" id="hex-pick" value="${esc(f.hex_color || "#888888")}"
+                 title="Pick a color" aria-label="Color picker">
+          <span class="hint">Shown as the swatch; blank = not set</span></div>
+        <div class="field"><label>Nozzle temp (°C)</label>
+          <input name="nozzle_temp_c" type="number" min="0" max="1000" step="1" value="${f.nozzle_temp_c ?? 0}">
+          <span class="hint">0 = not set</span></div>
+        <div class="field"><label>Bed temp (°C)</label>
+          <input name="bed_temp_c" type="number" min="0" max="1000" step="1" value="${f.bed_temp_c ?? 0}">
+          <span class="hint">0 = not set</span></div>
         <div class="field"><label>Picture</label>
           <input name="picture" type="file" accept="image/*">
           <span class="hint">${f.picture_url ? "Currently on file." : "PNG / JPEG / GIF / WEBP, ≤ 10 MB"}</span></div>
@@ -624,6 +643,36 @@ function filamentForm(existing) {
       </div>
     </form>
   `);
+
+  // Keep the hex text field, the color picker and the swatch in sync
+  // (#1a2b3c, 1A2B3C and the picker all mean the same color — accept all,
+  // normalize the text to '#rrggbb' when valid, and blank clears it).
+  const hexIn = $("#hex-input", m), hexPick = $("#hex-pick", m), hexSwatch = $("#hex-swatch", m);
+  const paintHexSwatch = () => {
+    const v = hexIn.value.trim();
+    if (/^#[0-9a-f]{6}$/i.test(v)) {
+      hexSwatch.style.background = v.toLowerCase();
+      hexSwatch.hidden = false;
+      hexPick.value = v.toLowerCase();
+    } else {
+      hexSwatch.hidden = true;
+      hexSwatch.style.background = "";
+    }
+  };
+  hexIn.addEventListener("input", () => {
+    // Auto-prefix '#' while the user types the six digits — friendlier than
+    // making them remember it.
+    const v = hexIn.value.trim();
+    if (v && v !== "#" && !v.startsWith("#") && /^[0-9a-fA-F]{0,6}$/.test(v)) hexIn.value = "#" + v;
+    paintHexSwatch();
+  });
+  hexIn.addEventListener("change", () => {
+    const v = hexIn.value.trim();
+    hexIn.value = /^#[0-9a-f]{6}$/i.test(v) ? v.toLowerCase() : v;  // canonical form on blur
+    paintHexSwatch();
+  });
+  hexPick.addEventListener("input", () => { hexIn.value = hexPick.value.toLowerCase(); paintHexSwatch(); });
+  paintHexSwatch();   // reflect an existing value immediately
 
   $("#fil-form", m).addEventListener("submit", (e) => {
     e.preventDefault();

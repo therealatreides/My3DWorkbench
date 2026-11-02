@@ -110,8 +110,11 @@ function stockBadge(f) {
     : `<span class="badge badge-stock-out">Out of stock</span>`;
 }
 function thumbHtml(f) {
-  return f.picture_url
-    ? `<img class="thumb" src="${esc(f.picture_url)}" alt="">`
-    : `<div class="thumb-placeholder">🧵</div>`;
+  // Picture wins; otherwise the saved hex color shades the whole thumbnail
+  // (just the color itself, no emoji); the 🧵 placeholder is only for a
+  // filament that has neither.
+  if (f.picture_url) return `<img class="thumb" src="${esc(f.picture_url)}" alt="">`;
+  if (f.hex_color) return `<div class="thumb thumb-color" style="background:${esc(f.hex_color)}" aria-hidden="true"></div>`;
+  return `<div class="thumb-placeholder">🧵</div>`;
 }
 function flashLoading() { $("#app").innerHTML = '<div class="loading">Loading…</div>'; }

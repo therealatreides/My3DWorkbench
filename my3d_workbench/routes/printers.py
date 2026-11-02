@@ -1,6 +1,7 @@
 """Printer fleet: CRUD for 3D printers and their per-printer cost settings.
 
-Each printer stores basics (manufacturer, model, bed size, notes) plus
+Each printer stores basics (manufacturer, model, bed size, last maintenance
+date, notes) plus
 optional **overrides** of the global cost-calculation settings (the 11 keys
 the cost engine consumes, listed in ``cost.COST_SETTING_KEYS``). An override
 is a (printer_id, key, value) row in ``printer_settings``.
@@ -22,7 +23,7 @@ from flask import Blueprint, jsonify
 from .. import cost as cost_engine
 from .. import db as db_module
 from .. import errors
-from ..api_helpers import field, str_field
+from ..api_helpers import date_field, field, str_field
 
 bp = Blueprint("printers", __name__, url_prefix="/api/printers")
 
@@ -60,6 +61,7 @@ def _parse_basics():
     return (str_field("model_name", required=True, max_len=255),
             str_field("manufacturer", max_len=255),
             str_field("bed_size", max_len=255),
+            date_field("last_maintenance"),
             str_field("notes", max_len=2000))
 
 
@@ -133,11 +135,11 @@ def list_printers():
 
 @bp.post("")
 def create_printer():
-    name, manufacturer, bed_size, notes = _parse_basics()
+    name, manufacturer, bed_size, maint, notes = _parse_basics()
     overrides = _parse_overrides()
     cur = db_module.execute(
-        "INSERT INTO printers (manufacturer, model_name, bed_size, notes) "
-        "VALUES (?,?,?,?)", (manufacturer, name, bed_size, notes))
+        "INSERT INTO printers (manufacturer, model_name, bed_size, last_maintenance, notes) "
+        "VALUES (?,?,?,?,?)", (manufacturer, name, bed_size, maint, notes))
     printer_id = cur.lastrowid      # capture before _apply_overrides reuses the cursor
     _apply_overrides(cur, printer_id, overrides)
     return jsonify(_full(printer_id)), 201
@@ -159,12 +161,12 @@ def _require_int64(printer_id):
 @bp.put("/<int:printer_id>")
 def update_printer(printer_id):
     _require_int64(printer_id)
-    name, manufacturer, bed_size, notes = _parse_basics()
+    name, manufacturer, bed_size, maint, notes = _parse_basics()
     overrides = _parse_overrides()
     cur = db_module.execute(
-        "UPDATE printers SET manufacturer=?, model_name=?, bed_size=?, notes=?, "
+        "UPDATE printers SET manufacturer=?, model_name=?, bed_size=?, last_maintenance=?, notes=?, "
         "updated_at=CURRENT_TIMESTAMP WHERE id=?",
-        (manufacturer, name, bed_size, notes, printer_id))
+        (manufacturer, name, bed_size, maint, notes, printer_id))
     if cur.rowcount == 0:
         raise errors.APIError(f"Printer {printer_id} not found.", 404)
     _apply_overrides(cur, printer_id, overrides)

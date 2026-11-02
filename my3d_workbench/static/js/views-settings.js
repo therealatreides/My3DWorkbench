@@ -23,7 +23,8 @@ function renderSettings(data) {
       <div>
         <h1>Settings</h1>
         <div class="view-sub">Global assumptions used by the cost engine — seeded from the
-          “Adv. Inputs” sheet. Individual printers can override any of these on the <a href="#/printers">Printers</a> tab.</div>
+          “Adv. Inputs” sheet. Individual printers can override any of these on the <a href="#/printers">Printers</a> tab.
+          The maintenance period is not a cost value — it drives the overdue flag on the Printers tab.</div>
       </div>
       <div class="spacer"></div>
       <button class="primary" data-on="save">Save changes</button>
@@ -46,14 +47,16 @@ function renderSettings(data) {
       </div>` : `<div class="rate-comps"><span class="chip">Fixed by print_time_rate_override</span></div>`}
     </div>
 
-    <h3 style="margin-top:22px">Global Cost Defaults</h3>
+    <h3 style="margin-top:22px">Global Defaults</h3>
     <table class="settings-table">
       <thead><tr><th>Key</th><th>Value</th><th style="width:45%">Description</th><th></th></tr></thead>
       <tbody>
         ${data.settings.map((s) => `
           <tr data-key="${esc(s.key)}">
             <td class="key">${esc(s.key)}</td>
-            <td><input class="set-val" value="${esc(s.value)}" ${data.numeric_keys.includes(s.key) ? 'inputmode="decimal"' : ""}></td>
+            <td><input class="set-val" value="${esc(s.value)}" ${
+              data.numeric_keys.includes(s.key) || s.key === "maintenance_period_days"
+                ? 'inputmode="decimal"' : ""}></td>
             <td class="desc">${esc(s.description)}</td>
             <td style="text-align:right"><button class="ghost icon del-set" title="Reset to default">↺</button></td>
           </tr>`).join("")}

@@ -19,6 +19,21 @@ const PRINTER_SETTING_KEYS = [
 
 let printToken = 0;
 
+/* Overdue-maintenance state for a printer — null when the flag is off
+   (period blank/missing, no recorded date, or not yet past the period).
+   Date-only math is done locally: days since the last-maintenance date. */
+function maintInfo(p) {
+  const row = ((App.state && App.state.settings) || [])
+    .find((r) => r.key === "maintenance_period_days");
+  const period = row ? parseInt(row.value, 10) : 0;
+  if (!p || !p.last_maintenance || !period || isNaN(period) || period < 1) return null;
+  const last = new Date(p.last_maintenance + "T00:00:00");   // local midnight, not UTC
+  if (isNaN(last)) return null;
+  const days = Math.floor((Date.now() - last.getTime()) / 86400000);
+  if (days < 0) return { days: 0, period, overdue: false };
+  return { days, period, overdue: days > period };
+}
+
 function viewPrinters() {
   const app = $("#app");
   app.innerHTML = `
@@ -42,6 +57,16 @@ async function fillPrintGrid() {
   const grid = $("#print-grid"), pill = $("#print-count");
   if (!grid || !pill) return;
   const token = ++printToken;
+  // The overdue flag depends on the maintenance-period setting — make sure it
+  // is known BEFORE the cards are painted so the red border is correct on the
+  // first paint (cached in App.state, so subsequent opens are free).
+  if (!App.state.settings) {
+    try {
+      const s = await api.get("/api/settings");
+      App.state.settings = s.settings || [];
+    } catch { /* flag simply stays off */ }
+    if (token !== printToken) return;
+  }
   let list;
   try {
     list = await api.get("/api/printers");
@@ -60,8 +85,13 @@ async function fillPrintGrid() {
 
 function printCard(p) {
   const n = Object.keys(p.settings || {}).length;
+  const maint = p.last_maintenance
+    ? new Date(p.last_maintenance + "T00:00:00")   // local midnight, not UTC
+    : null;
+  const maintTxt = maint && !isNaN(maint) ? maint.toLocaleDateString() : (p.last_maintenance || "not recorded");
+  const mi = maintInfo(p);
   return `
-  <div class="card" data-id="${p.id}" data-on="edit">
+  <div class="card${mi && mi.overdue ? " card-overdue" : ""}" data-id="${p.id}" data-on="edit">
     <div class="thumb-placeholder">🖨️</div>
     <div class="card-body">
       <div class="card-title">${esc(p.model_name)}
@@ -70,6 +100,8 @@ function printCard(p) {
       <div class="chip-row">
         <span class="chip" title="Machine rate this printer produces (global settings + its overrides)">${money(p.machine_rate)}/hr</span>
         <span class="chip" title="Number of cost settings overridden">${n} override${n === 1 ? "" : "s"}</span>
+        <span class="chip" title="Last time proper, regular maintenance was done">🔧 ${esc(maintTxt)}</span>
+        ${mi && mi.overdue ? `<span class="chip chip-overdue" title="Older than your ${mi.period}-day maintenance period — due for proper maintenance">⚠ due: ${mi.days} days ago</span>` : ""}
       </div>
       ${p.notes ? `<div class="card-meta" style="margin-top:6px">${esc(p.notes)}</div>` : ""}
       <div class="card-actions">
@@ -121,6 +153,15 @@ async function printerForm(existing) {
   const globalMap = {};
   (App.state.settings || []).forEach((row) => { globalMap[row.key] = row.value; });
 
+  // Overdue banner up top when THIS printer is past its period — the form
+  // already holds the last_maintenance field, so fixing it is one save away.
+  const mi = p.id ? maintInfo(p) : null;
+  const mi_overdue_w = (mi && mi.overdue)
+    ? `<div class="maint-warn">⚠ <b>Maintenance overdue</b> — last done ${mi.days} days
+       ago, but your maintenance period is ${mi.period} days (≈ ${mi.days - mi.period} days late).
+       Already done it? Set the date below and save.</div>`
+    : "";
+
   const settingsFields = PRINTER_SETTING_KEYS.map(([key, label]) => {
     const g = globalMap[key];
     const hint = (globalMap[key] !== undefined)
@@ -138,6 +179,7 @@ async function printerForm(existing) {
       <h2>${p.id ? "Edit printer" : "Add printer"}</h2>
       <button class="icon" data-close>✕</button>
     </div>
+    ${mi_overdue_w}
     <form class="form" id="print-form">
       <div class="form-grid">
         <div class="field"><label>Printer model *</label>
@@ -146,6 +188,9 @@ async function printerForm(existing) {
           <input name="manufacturer" maxlength="255" value="${esc(p.manufacturer || "")}" placeholder="e.g. Bambu Lab"></div>
         <div class="field"><label>Bed size</label>
           <input name="bed_size" maxlength="255" value="${esc(p.bed_size || "")}" placeholder="e.g. 256 × 256 × 256 mm"></div>
+        <div class="field"><label>Last maintenance</label>
+          <input name="last_maintenance" type="date" value="${esc(p.last_maintenance || "")}">
+          <span class="hint">When you last did proper, regular maintenance — blank = not recorded</span></div>
       </div>
       <div class="field" style="margin-top:14px"><label>Notes</label>
         <textarea name="notes" maxlength="2000" rows="2">${esc(p.notes || "")}</textarea></div>

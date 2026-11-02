@@ -42,6 +42,9 @@ CREATE TABLE IF NOT EXISTS filaments (
     current_stock_g REAL    NOT NULL DEFAULT 0,     -- grams on hand; 0 => out of stock
     image_path      TEXT    NOT NULL DEFAULT '',    -- stored relative to /uploads
     notes           TEXT    NOT NULL DEFAULT '',
+    hex_color       TEXT    NOT NULL DEFAULT '',    -- '#rrggbb' or '' (blank = not set)
+    bed_temp_c      REAL    NOT NULL DEFAULT 0,     -- recommended bed temp, °C; 0 = not set
+    nozzle_temp_c   REAL    NOT NULL DEFAULT 0,     -- recommended nozzle temp, °C; 0 = not set
     created_at      TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT    NOT NULL DEFAULT (datetime('now'))
 );
@@ -113,6 +116,7 @@ CREATE TABLE IF NOT EXISTS printers (
     manufacturer TEXT    NOT NULL DEFAULT '',
     model_name   TEXT    NOT NULL,                 -- e.g. "P1S", "Ender-3 V3 SE"
     bed_size     TEXT    NOT NULL DEFAULT '',      -- free text, e.g. "256 x 256 x 256 mm"
+    last_maintenance TEXT NOT NULL DEFAULT '',     -- last regular service: 'YYYY-MM-DD' or '' (not recorded)
     notes        TEXT    NOT NULL DEFAULT '',
     created_at   TEXT    NOT NULL DEFAULT (datetime('now')),
     updated_at   TEXT    NOT NULL DEFAULT (datetime('now'))
@@ -161,6 +165,10 @@ SEED_SETTINGS = [
      "Optional: force the machine rate (currency per print-hour) to a fixed value. Leave blank to compute it automatically."),
     ("currency_code", "USD",
      "Code used to display prices in the UI, e.g. USD, EUR, GBP."),
+    ("maintenance_period_days", "45",
+     "How often (in days) you normally do proper maintenance on a printer. "
+     "The Printers tab flags any printer whose last maintenance is older than this. "
+     "Whole number of days, e.g. 45 — blank turns the flag off."),
 ]
 
 
@@ -175,6 +183,28 @@ def _connect(db_path):
     return conn
 
 
+# Columns added after a given schema version shipped. ``CREATE TABLE IF
+# NOT EXISTS`` never changes an existing table, so these are backported
+# onto the legacy table on every start; a duplicate-column error means the
+# column is already there (or was added last run) and is safe to ignore.
+SCHEMA_MIGRATIONS = (
+    ("hex_color", "ALTER TABLE filaments ADD COLUMN hex_color TEXT NOT NULL DEFAULT ''"),
+    ("bed_temp_c", "ALTER TABLE filaments ADD COLUMN bed_temp_c REAL NOT NULL DEFAULT 0"),
+    ("nozzle_temp_c", "ALTER TABLE filaments ADD COLUMN nozzle_temp_c REAL NOT NULL DEFAULT 0"),
+    ("last_maintenance", "ALTER TABLE printers ADD COLUMN last_maintenance TEXT NOT NULL DEFAULT ''"),
+)
+
+
+def _apply_migrations(conn):
+    """Backport new columns onto databases created before they shipped."""
+    for _column, ddl in SCHEMA_MIGRATIONS:
+        try:
+            conn.execute(ddl)
+        except sqlite3.OperationalError as err:
+            if "duplicate column" not in str(err):
+                raise
+
+
 def init_app(app):
     """Create the schema (if needed) and seed default settings. Idempotent."""
     db_path = app.config["DATABASE_PATH"]
@@ -182,6 +212,7 @@ def init_app(app):
     conn = _connect(db_path)
     try:
         conn.executescript(SCHEMA)
+        _apply_migrations(conn)
         conn.executemany(
             "INSERT OR IGNORE INTO settings (key, value, description) VALUES (?, ?, ?)",
             SEED_SETTINGS,
